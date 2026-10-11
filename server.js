@@ -6,16 +6,17 @@ import { fileURLToPath } from 'node:url';
 const app = express();
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 3000);
+
 const NEXUS_API_BASE = (
   process.env.NEXUS_API_BASE || 'https://nexus.amadeustech.dev'
 ).replace(/\/$/, '');
 
 app.use(express.json({ limit: '100kb' }));
 
-// Публикуем сайт из корневой папки проекта.
+// Сайт и index.html находятся в корне репозитория
 app.use(express.static(__dirname));
 
-// Проверка работоспособности сервера.
+// Проверка работоспособности сервера
 app.get('/api/health', (_req, res) => {
   res.json({
     ok: true,
@@ -23,7 +24,7 @@ app.get('/api/health', (_req, res) => {
   });
 });
 
-// Получение каталога от поставщика Nexus.
+// Загрузка каталога Nexus
 app.get('/api/catalog', async (_req, res) => {
   const token = process.env.NEXUS_SHOP_TOKEN;
 
@@ -31,8 +32,7 @@ app.get('/api/catalog', async (_req, res) => {
     return res.json({
       mode: 'demo',
       products: [],
-      message:
-        'Nexus API не подключён. Добавьте NEXUS_SHOP_TOKEN в переменные окружения сервера.'
+      message: 'Nexus API пока не подключён.'
     });
   }
 
@@ -54,8 +54,7 @@ app.get('/api/catalog', async (_req, res) => {
       console.error('Nexus catalog error:', response.status);
 
       return res.status(502).json({
-        error:
-          'Не удалось загрузить каталог поставщика. Проверьте настройки Nexus.'
+        error: 'Не удалось загрузить каталог Nexus.'
       });
     }
 
@@ -63,8 +62,8 @@ app.get('/api/catalog', async (_req, res) => {
       mode: 'live',
       catalog: body
     });
-  } catch (err) {
-    console.error('Nexus request failed:', err.message);
+  } catch (error) {
+    console.error('Nexus request failed:', error.message);
 
     return res.status(502).json({
       error: 'Сервер Nexus временно недоступен.'
@@ -72,20 +71,20 @@ app.get('/api/catalog', async (_req, res) => {
   }
 });
 
-// Заказы отключены до проверки товара, выдачи UC и оплаты.
+// Реальные заказы пока отключены
 app.post('/api/orders', (_req, res) => {
-  return res.status(501).json({
+  res.status(501).json({
     error:
-      'Оформление заказов пока отключено. Сначала подтвердите товар PUBG UC в каталоге Nexus и настройте разрешённый способ оплаты.'
+      'Заказы пока отключены. Сначала необходимо проверить товары, данные доставки и способ оплаты.'
   });
 });
 
-// Показываем index.html для остальных адресов сайта.
+// Главная страница сайта
 app.get('*', (_req, res) => {
   res.sendFile(path.join(__dirname, 'index.html'));
 });
 
 app.listen(PORT, () => {
-  console.log(`ZAVAEBATEL UC server listening on ${PORT}`);
+  console.log(`ZAVAEBATEL UC server listening on port ${PORT}`);
 });
 ```
