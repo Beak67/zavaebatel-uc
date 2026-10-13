@@ -3,7 +3,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const app = express();
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const currentFile = fileURLToPath(import.meta.url);
+const currentDir = path.dirname(currentFile);
 const PORT = Number(process.env.PORT || 3000);
 
 const NEXUS_API_BASE = (
@@ -11,16 +12,16 @@ process.env.NEXUS_API_BASE || 'https://nexus.amadeustech.dev'
 ).replace(//$/, '');
 
 app.use(express.json());
-app.use(express.static(__dirname));
+app.use(express.static(currentDir));
 
-app.get('/api/health', (_req, res) => {
-res.json({
+app.get('/api/health', function (req, res) {
+res.status(200).json({
 ok: true,
 shop: 'ZAVAEBATEL UC'
 });
 });
 
-app.get('/api/catalog', async (_req, res) => {
+app.get('/api/catalog', async function (req, res) {
 const token = process.env.NEXUS_SHOP_TOKEN;
 
 if (!token) {
@@ -36,6 +37,7 @@ const catalogUrl = NEXUS_API_BASE + '/api/v1/catalog';
 
 ```
 const response = await fetch(catalogUrl, {
+  method: 'GET',
   headers: {
     Authorization: 'Shop ' + token,
     Accept: 'application/json'
@@ -43,11 +45,12 @@ const response = await fetch(catalogUrl, {
   signal: AbortSignal.timeout(15000)
 });
 
-const body = await response.json().catch(() => ({}));
+const body = await response.json().catch(function () {
+  return {};
+});
 
 if (!response.ok) {
-  console.error('Nexus catalog error:', response.status);
-
+  console.error('Nexus catalog HTTP status:', response.status);
   return res.status(502).json({
     error: 'Не удалось загрузить каталог Nexus.'
   });
@@ -71,16 +74,16 @@ return res.status(502).json({
 }
 });
 
-app.post('/api/orders', (_req, res) => {
-res.status(501).json({
-error: 'Заказы пока отключены до проверки каталога PUBG UC и настройки оплаты.'
+app.post('/api/orders', function (req, res) {
+return res.status(501).json({
+error: 'Заказы отключены до проверки каталога и настройки оплаты.'
 });
 });
 
-app.get('*', (_req, res) => {
-res.sendFile(path.join(__dirname, 'index.html'));
+app.get('*', function (req, res) {
+res.sendFile(path.join(currentDir, 'index.html'));
 });
 
-app.listen(PORT, () => {
+app.listen(PORT, function () {
 console.log('ZAVAEBATEL UC server listening on port ' + PORT);
 });
