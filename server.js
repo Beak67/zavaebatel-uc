@@ -11,7 +11,6 @@ process.env.NEXUS_API_BASE || 'https://nexus.amadeustech.dev'
 ).replace(//$/, '');
 
 app.use(express.json());
-
 app.use(express.static(__dirname));
 
 app.get('/api/health', (_req, res) => {
@@ -33,8 +32,7 @@ message: 'Nexus API пока не подключён.'
 }
 
 try {
-const catalogUrl =
-NEXUS_API_BASE + '/api/v1/catalog';
+const catalogUrl = NEXUS_API_BASE + '/api/v1/catalog';
 
 ```
 const response = await fetch(catalogUrl, {
