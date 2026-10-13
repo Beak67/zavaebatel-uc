@@ -3,13 +3,15 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const app = express();
-const currentFile = fileURLToPath(import.meta.url);
-const currentDir = path.dirname(currentFile);
+const currentDir = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 3000);
 
-const NEXUS_API_BASE = (
-process.env.NEXUS_API_BASE || 'https://nexus.amadeustech.dev'
-).replace(//$/, '');
+const rawNexusUrl =
+process.env.NEXUS_API_BASE || 'https://nexus.amadeustech.dev';
+
+const NEXUS_API_BASE = rawNexusUrl.endsWith('/')
+? rawNexusUrl.slice(0, -1)
+: rawNexusUrl;
 
 app.use(express.json());
 app.use(express.static(currentDir));
@@ -51,6 +53,7 @@ const body = await response.json().catch(function () {
 
 if (!response.ok) {
   console.error('Nexus catalog HTTP status:', response.status);
+
   return res.status(502).json({
     error: 'Не удалось загрузить каталог Nexus.'
   });
