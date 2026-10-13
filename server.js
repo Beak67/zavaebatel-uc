@@ -53,8 +53,10 @@ const body = await response.json().catch(function () {
 
 if (!response.ok) {
   console.error('Nexus catalog HTTP status:', response.status);
+
   return res.status(502).json({
-    error: 'Не удалось загрузить каталог Nexus.'
+    error: 'Не удалось загрузить каталог Nexus.',
+    status: response.status
   });
 }
 
@@ -65,16 +67,23 @@ return res.json({
 ```
 
 } catch (error) {
-console.error('Nexus request failed:', error.message);
+console.error(
+'Nexus request failed:',
+error && error.message ? error.message : String(error)
+);
+
+```
 return res.status(502).json({
-error: 'Сервер Nexus временно недоступен.'
+  error: 'Сервер Nexus временно недоступен.'
 });
+```
+
 }
 });
 
 app.post('/api/orders', function (req, res) {
 return res.status(501).json({
-error: 'Заказы отключены до проверки каталога и настройки оплаты.'
+error: 'Оформление заказов пока отключено.'
 });
 });
 
@@ -83,5 +92,7 @@ res.sendFile(path.join(currentDir, 'index.html'));
 });
 
 app.listen(PORT, '0.0.0.0', function () {
-console.log('ZAVAEBATEL UC server listening on port ' + PORT);
+console.log(
+'ZAVAEBATEL UC server listening on port ' + PORT
+);
 });
