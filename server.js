@@ -10,7 +10,8 @@ const NEXUS_API_BASE = (
 process.env.NEXUS_API_BASE || 'https://nexus.amadeustech.dev'
 ).replace(//$/, '');
 
-app.use(express.json({ limit: '100kb' }));
+app.use(express.json());
+
 app.use(express.static(__dirname));
 
 app.get('/api/health', (_req, res) => {
