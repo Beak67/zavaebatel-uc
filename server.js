@@ -12,11 +12,9 @@ const NEXUS_API_BASE = (
 ).replace(/\/$/, '');
 
 app.use(express.json({ limit: '100kb' }));
-
-// Статические файлы сайта находятся в корне проекта
 app.use(express.static(__dirname));
 
-// Проверка запуска сервера
+// Проверка запуска
 app.get('/api/health', (_req, res) => {
   res.json({
     ok: true,
@@ -24,7 +22,7 @@ app.get('/api/health', (_req, res) => {
   });
 });
 
-// Получение каталога Nexus
+// Каталог Nexus
 app.get('/api/catalog', async (_req, res) => {
   const token = process.env.NEXUS_SHOP_TOKEN;
 
@@ -37,12 +35,11 @@ app.get('/api/catalog', async (_req, res) => {
   }
 
   try {
-    const catalogUrl =
-      `${NEXUS_API_BASE}/api/v1/catalog`;
+    const catalogUrl = NEXUS_API_BASE + '/api/v1/catalog';
 
     const response = await fetch(catalogUrl, {
       headers: {
-        Authorization: `Shop ${token}`,
+        Authorization: 'Shop ' + token,
         Accept: 'application/json'
       },
       signal: AbortSignal.timeout(15000)
@@ -51,11 +48,7 @@ app.get('/api/catalog', async (_req, res) => {
     const body = await response.json().catch(() => ({}));
 
     if (!response.ok) {
-      console.error(
-        'Nexus catalog error:',
-        response.status
-      );
-
+      console.error('Nexus catalog error:', response.status);
       return res.status(502).json({
         error: 'Не удалось загрузить каталог Nexus.'
       });
@@ -66,33 +59,26 @@ app.get('/api/catalog', async (_req, res) => {
       catalog: body
     });
   } catch (error) {
-    console.error(
-      'Nexus request failed:',
-      error.message
-    );
-
+    console.error('Nexus request failed:', error.message);
     return res.status(502).json({
       error: 'Сервер Nexus временно недоступен.'
     });
   }
 });
 
-// Реальные заказы пока отключены
+// Оформление заказов пока отключено
 app.post('/api/orders', (_req, res) => {
   res.status(501).json({
-    error:
-      'Заказы пока отключены. Сначала проверьте каталог PUBG UC, данные доставки и разрешённый способ оплаты.'
+    error: 'Заказы пока отключены. Сначала необходимо проверить каталог PUBG UC, данные доставки и способ оплаты.'
   });
 });
 
-// Главная страница сайта
+// Главная страница
 app.get('*', (_req, res) => {
   res.sendFile(path.join(__dirname, 'index.html'));
 });
 
 app.listen(PORT, () => {
-  console.log(
-    `ZAVAEBATEL UC server listening on port ${PORT}`
-  );
+  console.log('ZAVAEBATEL UC server listening on port ' + PORT);
 });
 ```
