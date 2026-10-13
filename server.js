@@ -53,7 +53,6 @@ const body = await response.json().catch(function () {
 
 if (!response.ok) {
   console.error('Nexus catalog HTTP status:', response.status);
-
   return res.status(502).json({
     error: 'Не удалось загрузить каталог Nexus.'
   });
@@ -67,13 +66,9 @@ return res.json({
 
 } catch (error) {
 console.error('Nexus request failed:', error.message);
-
-```
 return res.status(502).json({
-  error: 'Сервер Nexus временно недоступен.'
+error: 'Сервер Nexus временно недоступен.'
 });
-```
-
 }
 });
 
@@ -87,6 +82,6 @@ app.get('*', function (req, res) {
 res.sendFile(path.join(currentDir, 'index.html'));
 });
 
-app.listen(PORT, function () {
+app.listen(PORT, '0.0.0.0', function () {
 console.log('ZAVAEBATEL UC server listening on port ' + PORT);
 });
