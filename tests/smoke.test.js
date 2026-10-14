@@ -6,7 +6,9 @@ import { spawnSync } from 'node:child_process';
 process.env.NEXUS_PRICE_CURRENCY = 'USD';
 process.env.NEXUS_USD_RUB = '85';
 process.env.SALE_MARKUP = '0.20';
-const { default: app, normalizeProducts, retailPrice } = await import('../server.js');
+const { default: app, normalizeProducts, retailPrice, getCatalog } = await import('../server.js');
+process.env.NEXUS_SHOP_ID = 'test-shop';
+process.env.NEXUS_SHOP_TOKEN = 'test-token';
 
 test('normalizes a known list envelope and filters non-UC products', () => {
   assert.deepEqual(normalizeProducts({ products: [
@@ -23,6 +25,26 @@ test('missing currency is rejected in a clean process', () => {
   });
   assert.equal(result.status, 0, result.stderr);
 });
+
+test('fetches and normalizes a successful Nexus response', async () => {
+  const original = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({ products: [{ id: 'pubg-mobile:uc:60', name: '60 UC', price: 1.25 }] }), { status: 200, headers: { 'content-type': 'application/json' } });
+  try { assert.deepEqual(await getCatalog(), [{ id: 'pubg-mobile:uc:60', name: '60 UC', icon: null, priceUsd: 1.25 }]); }
+  finally { globalThis.fetch = original; }
+});
+test('does not treat malformed Nexus JSON as a successful catalog', async () => {
+  const original = globalThis.fetch;
+  globalThis.fetch = async () => new Response('not-json', { status: 200 });
+  try { await assert.rejects(getCatalog(), /некорректный JSON/); }
+  finally { globalThis.fetch = original; }
+});
+test('bounds retry attempts for temporary supplier failures', async () => {
+  const original = globalThis.fetch; let calls = 0;
+  globalThis.fetch = async () => { calls++; throw Object.assign(new Error('network'), { name: 'TimeoutError' }); };
+  try { await assert.rejects(getCatalog(), /временно недоступен/); assert.equal(calls, 2); }
+  finally { globalThis.fetch = original; }
+});
+
 test('home, health, catalog errors and internal-file protection', async () => {
   const server = http.createServer(app);
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
