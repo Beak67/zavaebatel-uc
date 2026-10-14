@@ -13,28 +13,25 @@ process.env.NEXUS_API_BASE || 'https://nexus.amadeustech.dev'
 app.use(express.json());
 app.use(express.static(currentDir));
 
-// Проверка сервера
-app.get('/api/health', (req, res) => {
+app.get('/api/health', function (req, res) {
 res.status(200).json({
 ok: true,
 shop: 'ZAVAEBATEL UC'
 });
 });
 
-// Загрузка каталога PUBG Mobile UC
-app.get('/api/catalog', async (req, res) => {
+app.get('/api/catalog', async function (req, res) {
 const shopId = process.env.NEXUS_SHOP_ID;
 const shopToken = process.env.NEXUS_SHOP_TOKEN;
 
 if (!shopId || !shopToken) {
 return res.status(503).json({
-error: 'Добавь NEXUS_SHOP_ID и NEXUS_SHOP_TOKEN в Render Environment.'
+error: 'NEXUS_SHOP_ID and NEXUS_SHOP_TOKEN must be configured in Render.'
 });
 }
 
 try {
-const url =
-NEXUS_API_BASE +
+const url = NEXUS_API_BASE +
 '/api/v1/products?categoryId=pubg-mobile%3Auc';
 
 ```
@@ -52,41 +49,40 @@ let data;
 
 try {
   data = JSON.parse(responseText);
-} catch {
-  console.error('Nexus returned non-JSON. HTTP:', response.status);
-
+} catch (parseError) {
+  console.error('Nexus returned invalid JSON:', response.status);
   return res.status(502).json({
-    error: 'Nexus вернул ответ не в формате JSON.',
+    error: 'Nexus returned a response that is not valid JSON.',
     upstreamStatus: response.status
   });
 }
 
 if (!response.ok) {
   console.error('Nexus catalog error:', response.status);
-
   return res.status(502).json({
-    error: 'Nexus не смог выдать каталог.',
+    error: 'Nexus catalog request failed.',
     upstreamStatus: response.status
   });
 }
 
-const products = Array.isArray(data)
-  ? data
-  : Array.isArray(data.products)
-    ? data.products
-    : Array.isArray(data.data)
-      ? data.data
-      : null;
+let products = null;
+
+if (Array.isArray(data)) {
+  products = data;
+} else if (data && Array.isArray(data.products)) {
+  products = data.products;
+} else if (data && Array.isArray(data.data)) {
+  products = data.data;
+}
 
 if (!products) {
   console.error('Unexpected Nexus catalog response format');
-
   return res.status(502).json({
-    error: 'Формат каталога Nexus отличается от ожидаемого.'
+    error: 'Unexpected catalog format from Nexus.'
   });
 }
 
-return res.json({
+return res.status(200).json({
   mode: 'live',
   products: products
 });
@@ -94,25 +90,19 @@ return res.json({
 
 } catch (error) {
 console.error('Nexus request failed:', error.message);
-
-```
 return res.status(502).json({
-  error: 'Не удалось подключиться к Nexus.'
+error: 'Could not connect to Nexus.'
 });
-```
-
 }
 });
 
-// Заказы пока отключены
-app.post('/api/orders', (req, res) => {
+app.post('/api/orders', function (req, res) {
 return res.status(501).json({
-error: 'Оформление заказов пока не подключено.'
+error: 'Order processing is not configured yet.'
 });
 });
 
-// Отдача главной страницы
-app.use((req, res, next) => {
+app.use(function (req, res, next) {
 if (req.path.startsWith('/api/')) {
 return next();
 }
@@ -120,14 +110,12 @@ return next();
 return res.sendFile(path.join(currentDir, 'index.html'));
 });
 
-// Неизвестные API-маршруты
-app.use('/api', (req, res) => {
+app.use('/api', function (req, res) {
 return res.status(404).json({
-error: 'API-маршрут не найден.'
+error: 'API route not found.'
 });
 });
 
-// Запуск сервера
-app.listen(PORT, '0.0.0.0', () => {
+app.listen(PORT, '0.0.0.0', function () {
 console.log('ZAVAEBATEL UC server listening on port ' + PORT);
 });
