@@ -6,15 +6,18 @@ const app = express();
 const currentDir = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 3000);
 
-const NEXUS_API_BASE = (
-process.env.NEXUS_API_BASE || 'https://nexus.amadeustech.dev'
-).replace(//+$/, '');
+let NEXUS_API_BASE =
+process.env.NEXUS_API_BASE || 'https://nexus.amadeustech.dev';
+
+while (NEXUS_API_BASE.endsWith('/')) {
+NEXUS_API_BASE = NEXUS_API_BASE.slice(0, -1);
+}
 
 app.use(express.json());
 app.use(express.static(currentDir));
 
 app.get('/api/health', function (req, res) {
-res.status(200).json({
+return res.status(200).json({
 ok: true,
 shop: 'ZAVAEBATEL UC'
 });
@@ -26,12 +29,13 @@ const shopToken = process.env.NEXUS_SHOP_TOKEN;
 
 if (!shopId || !shopToken) {
 return res.status(503).json({
-error: 'NEXUS_SHOP_ID and NEXUS_SHOP_TOKEN must be configured in Render.'
+error: 'Add NEXUS_SHOP_ID and NEXUS_SHOP_TOKEN in Render Environment.'
 });
 }
 
 try {
-const url = NEXUS_API_BASE +
+const url =
+NEXUS_API_BASE +
 '/api/v1/products?categoryId=pubg-mobile%3Auc';
 
 ```
@@ -49,10 +53,10 @@ let data;
 
 try {
   data = JSON.parse(responseText);
-} catch (parseError) {
+} catch (error) {
   console.error('Nexus returned invalid JSON:', response.status);
   return res.status(502).json({
-    error: 'Nexus returned a response that is not valid JSON.',
+    error: 'Nexus returned invalid JSON.',
     upstreamStatus: response.status
   });
 }
