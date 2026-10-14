@@ -4,8 +4,13 @@
   "private": true,
   "description": "ZAVAEBATEL UC storefront with safe manual-order architecture",
   "type": "module",
-  "scripts": { "start": "node server.js", "test": "node --test" },
-  "engines": { "node": ">=20" },
+  "scripts": {
+    "start": "node server.js",
+    "test": "NODE_ENV=test node --test"
+  },
+  "engines": {
+    "node": ">=20"
+  },
   "dependencies": {
     "connect-pg-simple": "10.0.0",
     "express": "4.21.2",
