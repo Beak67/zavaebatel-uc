@@ -32,7 +32,7 @@ test('home, health, catalog errors and internal-file protection', async () => {
     assert.equal(home.status, 200);
     assert.match(await home.text(), /ZAVAEBATEL UC/);
     const health = await fetch(url + '/api/health');
-    assert.match(health.headers.get('content-type'), /application\\/json/);
+    assert.match(health.headers.get('content-type'), /application\/json/);
     const catalog = await fetch(url + '/api/catalog');
     assert.ok([502, 503].includes(catalog.status));
     assert.equal(typeof (await catalog.json()).error, 'string');
