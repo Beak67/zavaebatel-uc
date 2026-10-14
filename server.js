@@ -9,9 +9,7 @@ const PORT = Number(process.env.PORT || 3000);
 const rawNexusUrl =
 process.env.NEXUS_API_BASE || 'https://nexus.amadeustech.dev';
 
-const NEXUS_API_BASE = rawNexusUrl.endsWith('/')
-? rawNexusUrl.slice(0, -1)
-: rawNexusUrl;
+const NEXUS_API_BASE = rawNexusUrl.replace(//+$/, '');
 
 app.use(express.json());
 app.use(express.static(currentDir));
@@ -24,45 +22,72 @@ shop: 'ZAVAEBATEL UC'
 });
 
 app.get('/api/catalog', async function (req, res) {
-const token = process.env.NEXUS_SHOP_TOKEN;
+const shopToken = process.env.NEXUS_SHOP_TOKEN;
 
-if (!token) {
-return res.json({
-mode: 'demo',
-products: [],
-message: 'Nexus API пока не подключён.'
+if (!shopToken) {
+return res.status(503).json({
+error: 'Не настроен NEXUS_SHOP_TOKEN в Render.'
 });
 }
 
 try {
-const catalogUrl = NEXUS_API_BASE + '/api/v1/catalog';
+const url =
+NEXUS_API_BASE +
+'/api/v1/products?categoryId=pubg-mobile%3Auc';
 
 ```
-const response = await fetch(catalogUrl, {
+const response = await fetch(url, {
   method: 'GET',
   headers: {
-    Authorization: 'Shop ' + token,
+    Authorization: 'Shop ' + shopToken,
     Accept: 'application/json'
   },
   signal: AbortSignal.timeout(15000)
 });
 
-const body = await response.json().catch(function () {
-  return {};
-});
+const responseText = await response.text();
 
-if (!response.ok) {
-  console.error('Nexus catalog HTTP status:', response.status);
+let body;
+
+try {
+  body = JSON.parse(responseText);
+} catch {
+  console.error(
+    'Nexus returned non-JSON response. HTTP:',
+    response.status
+  );
 
   return res.status(502).json({
-    error: 'Не удалось загрузить каталог Nexus.',
-    status: response.status
+    error: 'Nexus вернул ответ не в формате JSON.',
+    upstreamStatus: response.status
+  });
+}
+
+if (!response.ok) {
+  console.error(
+    'Nexus catalog HTTP status:',
+    response.status,
+    body.errorCode || 'unknown'
+  );
+
+  return res.status(502).json({
+    error: 'Nexus не смог выдать каталог.',
+    upstreamStatus: response.status,
+    details: body.errorCode || body.errorMessage || 'Unknown error'
+  });
+}
+
+if (!Array.isArray(body)) {
+  console.error('Unexpected Nexus products response format');
+
+  return res.status(502).json({
+    error: 'Неожиданный формат каталога Nexus.'
   });
 }
 
 return res.json({
   mode: 'live',
-  catalog: body
+  products: body
 });
 ```
 
@@ -74,7 +99,7 @@ error && error.message ? error.message : String(error)
 
 ```
 return res.status(502).json({
-  error: 'Сервер Nexus временно недоступен.'
+  error: 'Не удалось подключиться к Nexus.'
 });
 ```
 
@@ -83,7 +108,7 @@ return res.status(502).json({
 
 app.post('/api/orders', function (req, res) {
 return res.status(501).json({
-error: 'Оформление заказов пока отключено.'
+error: 'Оформление заказов пока не подключено.'
 });
 });
 
