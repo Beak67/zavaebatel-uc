@@ -94,13 +94,13 @@ export function retailPrice(usd) {
 export function normalizeProducts(data) {
   const list = Array.isArray(data) ? data : [data?.products, data?.data, data?.items].find(Array.isArray);
   if (!Array.isArray(list)) throw new Error('Ответ Nexus не содержит распознаваемого списка товаров.');
-  return list.filter(p => p && typeof p === 'object' && typeof p.id === 'string' && /^pubg-mobile:uc:\\d+$/.test(p.id))
+  return list.filter(p => p && typeof p === 'object' && typeof p.id === 'string' && /^pubg-mobile:uc:\d+$/.test(p.id))
     .map(p => {
       if (!['number','string'].includes(typeof p.price) || String(p.price).trim() === '') throw new Error('У товара Nexus отсутствует поле price.');
       const priceUsd = Number(p.price);
       if (!Number.isFinite(priceUsd) || priceUsd <= 0) throw new Error('Nexus вернул некорректную цену.');
       return { id: p.id, name: typeof p.name === 'string' && p.name.trim() ? p.name.trim() : p.id,
-        icon: typeof p.icon === 'string' && /^https:\\/\\//i.test(p.icon) ? p.icon : null, priceUsd };
+        icon: typeof p.icon === 'string' && /^https:\/\//i.test(p.icon) ? p.icon : null, priceUsd };
     });
 }
 export async function getCatalog() {
