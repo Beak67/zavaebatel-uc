@@ -1,15 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import app, { normalizeProducts, retailPrice } from '../server.js';
+process.env.NEXUS_PRICE_CURRENCY='USD'; process.env.NEXUS_USD_RUB='85'; process.env.SALE_MARKUP='0.20';
+const {default: app, normalizeProducts, retailPrice}=await import('../server.js');
 import http from 'node:http';
 
 test('normalizes known list envelopes and filters non-UC products',()=>{
   assert.deepEqual(normalizeProducts({products:[{id:'pubg-mobile:uc:60',name:'60 UC',price:'1.2'},{id:'other:thing',price:3}]}),[{id:'pubg-mobile:uc:60',name:'60 UC',icon:null,priceUsd:1.2}]);
 });
 test('rejects unrecognized supplier body',()=>assert.throws(()=>normalizeProducts({unexpected:true}),/списка товаров|список товаров|списка товаров/));
-test('price currency is explicitly required',()=>{
-  const old=process.env.NEXUS_PRICE_CURRENCY; delete process.env.NEXUS_PRICE_CURRENCY;
-  try { assert.throws(()=>retailPrice(1),/NEXUS_PRICE_CURRENCY/); } finally { if(old===undefined) delete process.env.NEXUS_PRICE_CURRENCY; else process.env.NEXUS_PRICE_CURRENCY=old; }
+test('retail price uses USD FX and markup, rounded to cents',()=>assert.equal(retailPrice(1.23),125.46));
+test('missing currency is rejected in a clean process',async()=>{
+ const {spawnSync}=await import('node:child_process');
+ const r=spawnSync(process.execPath,['--input-type=module','-e',\"const m=await import('./server.js');try{m.retailPrice(1);process.exit(2)}catch(e){if(!e.message.includes('NEXUS_PRICE_CURRENCY'))process.exit(3)}\"],{cwd:process.cwd(),env:{...process.env,NEXUS_PRICE_CURRENCY:''},encoding:'utf8'});
+ assert.equal(r.status,0,r.stderr);
 });
 test('home, health, catalog config error and private files',async()=>{
   const server=http.createServer(app); await new Promise(r=>server.listen(0,'127.0.0.1',r));
