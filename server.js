@@ -7,133 +7,111 @@ const app = express();
 const currentDir = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 3000);
 
-let NEXUS_API_BASE =
-  process.env.NEXUS_API_BASE || 'https://nexus.amadeustech.dev';
-
-NEXUS_API_BASE = NEXUS_API_BASE.trim();
-
-while (NEXUS_API_BASE.endsWith('/')) {
-  NEXUS_API_BASE = NEXUS_API_BASE.slice(0, -1);
-}
+const NEXUS_API_BASE = (
+  process.env.NEXUS_API_BASE || 'https://nexus.amadeustech.dev'
+).trim().replace(/\/+$/, '');
 
 app.use(express.json());
 app.use(express.static(currentDir));
 
-app.get('/api/health', function (req, res) {
-  return res.status(200).json({
-    ok: true,
-    shop: 'ZAVAEBATEL UC'
-  });
+app.get('/api/health', (req, res) => {
+  res.json({ ok: true, shop: 'ZAVAEBATEL UC' });
 });
 
-app.get('/api/catalog', async function (req, res) {
-  const shopId = process.env.NEXUS_SHOP_ID;
-  const shopToken = process.env.NEXUS_SHOP_TOKEN;
+app.get('/api/catalog', async (req, res) => {
+  const shopId = process.env.NEXUS_SHOP_ID?.trim();
+  const shopToken = process.env.NEXUS_SHOP_TOKEN?.trim();
 
   if (!shopId || !shopToken) {
     return res.status(503).json({
-      error: 'NEXUS_SHOP_ID or NEXUS_SHOP_TOKEN is missing in Render.'
+      error: 'Настройки Nexus отсутствуют в Render.'
     });
   }
 
   try {
     const url =
-      NEXUS_API_BASE +
-      '/api/v1/products?categoryId=pubg-mobile%3Auc';
+      `${NEXUS_API_BASE}/api/v1/products?categoryId=pubg-mobile%3Auc`;
 
     const response = await fetch(url, {
-      method: 'GET',
       headers: {
-        Authorization: 'Shop ' + shopId.trim() + ':' + shopToken.trim(),
+        Authorization: `Shop ${shopId}:${shopToken}`,
         Accept: 'application/json'
       },
       signal: AbortSignal.timeout(20000)
     });
 
-    const responseText = await response.text();
-
+    const text = await response.text();
     let data;
 
     try {
-      data = JSON.parse(responseText);
+      data = JSON.parse(text);
     } catch {
-      console.error(
-        'Nexus returned non-JSON response. HTTP status:',
-        response.status
-      );
-
+      console.error('Nexus вернул не JSON. HTTP:', response.status);
       return res.status(502).json({
-        error: 'Nexus returned an invalid response.',
-        upstreamStatus: response.status
+        error: 'Поставщик вернул некорректный ответ.'
       });
     }
 
     if (!response.ok) {
-      console.error(
-        'Nexus catalog request failed. HTTP status:',
-        response.status
-      );
-
+      console.error('Nexus HTTP status:', response.status);
       return res.status(502).json({
-        error: 'Nexus catalog request failed.',
+        error: 'Не удалось получить каталог Nexus.',
         upstreamStatus: response.status
       });
     }
 
-    let products = null;
+    let products = [];
 
     if (Array.isArray(data)) {
       products = data;
-    } else if (data && Array.isArray(data.products)) {
+    } else if (Array.isArray(data.products)) {
       products = data.products;
-    } else if (data && Array.isArray(data.data)) {
+    } else if (Array.isArray(data.data)) {
       products = data.data;
+    } else if (Array.isArray(data.items)) {
+      products = data.items;
     }
 
-    if (!products) {
-      console.error('Unexpected Nexus catalog response format.');
+    // Оставляем только товары PUBG Mobile UC.
+    products = products.filter((p) => {
+      const id = String(p.id || '').toLowerCase();
+      const name = String(p.name || p.title || '').toLowerCase();
 
-      return res.status(502).json({
-        error: 'Unexpected catalog format from Nexus.'
-      });
-    }
+      return id.startsWith('pubg-mobile:uc:') ||
+        (name.includes('uc') && name.includes('pubg'));
+    });
 
-    return res.status(200).json({
+    return res.json({
       mode: 'live',
       count: products.length,
-      products: products
+      products
     });
   } catch (error) {
-    console.error('Nexus request error name:', error.name);
-    console.error('Nexus request error message:', error.message);
+    console.error('Nexus request error:', error.name, error.message);
 
     return res.status(502).json({
-      error: 'Could not connect to Nexus.',
+      error: 'Не удалось подключиться к Nexus.',
       reason: error.name || 'UnknownError'
     });
   }
 });
 
-app.post('/api/orders', function (req, res) {
-  return res.status(501).json({
-    error: 'Order processing is not configured yet.'
+// Реальные заказы пока отключены.
+app.post('/api/orders', (req, res) => {
+  res.status(501).json({
+    error: 'Оформление заказов ещё не настроено.'
   });
 });
 
-app.use(function (req, res, next) {
-  if (req.path.startsWith('/api/')) {
-    return next();
-  }
-
-  return res.sendFile(path.join(currentDir, 'index.html'));
+app.use((req, res, next) => {
+  if (req.path.startsWith('/api/')) return next();
+  res.sendFile(path.join(currentDir, 'index.html'));
 });
 
-app.use('/api', function (req, res) {
-  return res.status(404).json({
-    error: 'API route not found.'
-  });
+app.use('/api', (req, res) => {
+  res.status(404).json({ error: 'API route not found.' });
 });
 
-app.listen(PORT, '0.0.0.0', function () {
-  console.log('ZAVAEBATEL UC server listening on port ' + PORT);
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`ZAVAEBATEL UC server listening on port ${PORT}`);
 });
