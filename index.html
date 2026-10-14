@@ -1,134 +1,227 @@
 
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+  <meta name="theme-color" content="#080d18">
+  <title>ZAVAEBATEL UC</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #080d18;
+      --panel: #111a2a;
+      --red: #ef343b;
+      --gold: #ffd35f;
+      --muted: #9aa8bd;
+      --white: #f5f7fb;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: radial-gradient(ellipse at top, #15233a 0, var(--bg) 55%);
+      color: var(--white);
+      font: 15px/1.45 system-ui, sans-serif;
+    }
+
+    .wrap { max-width: 650px; margin: auto; padding: 18px 16px 32px; }
+    .top { display: flex; align-items: center; gap: 12px; }
+    .logo { width: 60px; height: 60px; border-radius: 15px; }
+    .brand { font-size: 20px; font-weight: 950; }
+    .sub { color: var(--muted); font-size: 12px; }
+    .hero {
+      margin: 20px 0 16px; padding: 20px;
+      border: 1px solid #28364e; border-radius: 20px;
+      background: linear-gradient(135deg, #17243a, #0d1422);
+    }
+    .eyebrow { color: var(--gold); font-size: 11px; font-weight: 800; letter-spacing: 1.4px; }
+    h1 { font-size: 27px; line-height: 1.15; margin: 9px 0; }
+    .hero p { color: #b7c3d5; font-size: 13px; margin-bottom: 0; }
+    .section { display: flex; justify-content: space-between; align-items: center; margin: 22px 2px 12px; }
+    .section h2 { font-size: 18px; margin: 0; }
+    .pill { background: #222c3e; color: var(--gold); border-radius: 99px; padding: 5px 9px; font-size: 11px; font-weight: 800; }
+    .notice { padding: 12px; margin: 12px 0; border-radius: 12px; background: #17243a; border: 1px solid #34425a; color: #d9e4f4; font-size: 12px; }
+    .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+    .product { min-width: 0; padding: 13px; border: 1px solid #29364a; border-radius: 16px; background: linear-gradient(160deg, #18253a, #101827); }
+    .coin { height: 62px; display: flex; align-items: center; justify-content: center; margin-bottom: 7px; }
+    .coin img { width: 56px; height: 56px; object-fit: contain; }
+    .coin span { display: grid; place-items: center; width: 52px; height: 52px; border-radius: 50%; background: radial-gradient(circle at 30% 25%, #ffe9a0, #d89b25 60%, #8e5816); border: 3px solid #ffe9a0; color: #151b26; font-weight: 1000; }
+    .qty { font-size: 18px; font-weight: 900; overflow-wrap: anywhere; }
+    .desc { color: var(--muted); font-size: 11px; }
+    .price { margin: 10px 0; color: var(--gold); font-size: 19px; font-weight: 950; overflow-wrap: anywhere; }
+    .buy { width: 100%; border: 0; border-radius: 10px; padding: 11px 6px; background: var(--red); color: white; font-weight: 900; }
+    .buy:disabled { opacity: .65; }
+    .empty { grid-column: 1 / -1; padding: 18px; text-align: center; color: var(--muted); border: 1px dashed #34425a; border-radius: 14px; }
+    .foot { text-align: center; color: #687890; font-size: 11px; margin-top: 24px; }
+    @media (min-width: 460px) { .grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+  </style>
+</head>
+
+<body>
+<main class="wrap">
+  <header class="top">
+    <img class="logo" src="/logo.svg" alt="ZAVAEBATEL UC">
+    <div>
+      <div class="brand">ZAVAEBATEL UC</div>
+      <div class="sub">PUBG MOBILE • UC STORE</div>
+    </div>
+  </header>
+
+  <section class="hero">
+    <div class="eyebrow">БЫСТРО • УДОБНО • НАДЁЖНО</div>
+    <h1>Пополняй UC.<br>Играй на максимум.</h1>
+    <p>Выбери пакет UC. Укажи свой Player ID перед покупкой.</p>
+  </section>
+
+  <div id="notice" class="notice" role="status">
+    Подключаем каталог Nexus…
+  </div>
+
+  <div class="section">
+    <h2>Пакеты UC</h2>
+    <span class="pill">PUBG MOBILE</span>
+  </div>
+
+  <div id="products" class="grid" aria-live="polite">
+    <div class="empty">Загружаем пакеты UC…</div>
+  </div>
+
+  <div class="foot">
+    ZAVAEBATEL UC · Независимый магазин. Не является официальным магазином PUBG MOBILE.
+    <br>Покупка пока отключена.
+  </div>
+</main>
+
 <script>
-const tg = window.Telegram?.WebApp;
-
-try {
-  tg?.ready();
-  tg?.expand();
-} catch {}
-
-const productsEl = document.getElementById('products');
-const notice = document.getElementById('notice');
-
-function render(products) {
-  productsEl.replaceChildren();
-
-  if (!products.length) {
-    productsEl.innerHTML =
-      '<div class="empty">Пакеты UC не найдены. Проверь каталог Nexus.</div>';
-    return;
-  }
-
-  const fragment = document.createDocumentFragment();
-
-  for (const p of products) {
-    const id = String(p.id || '');
-    const name = String(p.name || p.title || 'Пакет UC');
-
-    // Например, pubg-mobile:uc:660 -> 660 UC.
-    const match = id.match(/pubg-mobile:uc:(\d+)/i);
-    const amount = match ? Number(match[1]) : null;
-
-    const price = Number(p.price);
-    const validPrice = p.price !== null &&
-      p.price !== undefined &&
-      p.price !== '' &&
-      Number.isFinite(price);
-
-    const card = document.createElement('article');
-    card.className = 'product';
-
-    const coin = document.createElement('div');
-    coin.className = 'coin';
-
-    if (p.icon) {
-      const img = document.createElement('img');
-      img.src = p.icon;
-      img.alt = '';
-      img.width = 52;
-      img.height = 52;
-      img.style.objectFit = 'contain';
-      img.onerror = () => {
-        img.replaceWith(makeCoinLabel());
-      };
-      coin.appendChild(img);
-    } else {
-      coin.appendChild(makeCoinLabel());
-    }
-
-    function makeCoinLabel() {
-      const span = document.createElement('span');
-      span.textContent = 'UC';
-      return span;
-    }
-
-    const qty = document.createElement('div');
-    qty.className = 'qty';
-    qty.textContent = amount !== null
-      ? `${amount.toLocaleString('en-US')} UC`
-      : name;
-
-    const desc = document.createElement('div');
-    desc.className = 'desc';
-    desc.textContent = 'PUBG MOBILE';
-
-    const priceEl = document.createElement('div');
-    priceEl.className = 'price';
-
-    // Цена поставщика пока показывается в USD.
-    // Уточни валюту в кабинете Nexus перед запуском продаж.
-    priceEl.textContent = validPrice
-      ? `$${price.toFixed(2)}`
-      : 'Цена уточняется';
-
-    const button = document.createElement('button');
-    button.className = 'buy';
-    button.textContent = 'Скоро';
-    button.disabled = true;
-    button.title = 'Покупка пока не подключена';
-
-    card.append(coin, qty, desc, priceEl, button);
-    fragment.appendChild(card);
-  }
-
-  productsEl.appendChild(fragment);
-}
-
-async function loadCatalog() {
-  productsEl.innerHTML =
-    '<div class="empty loading">Загружаем пакеты UC…</div>';
+(() => {
+  const tg = window.Telegram?.WebApp;
 
   try {
-    const response = await fetch('/api/catalog', {
-      headers: { Accept: 'application/json' }
-    });
+    tg?.ready();
+    tg?.expand();
+  } catch {}
 
-    const data = await response.json();
+  const productsEl = document.getElementById('products');
+  const notice = document.getElementById('notice');
 
-    if (!response.ok) {
-      throw new Error(data.error || `HTTP ${response.status}`);
+  function showMessage(message) {
+    productsEl.replaceChildren();
+    const box = document.createElement('div');
+    box.className = 'empty';
+    box.textContent = message;
+    productsEl.appendChild(box);
+  }
+
+  function render(products) {
+    productsEl.replaceChildren();
+
+    if (!products.length) {
+      showMessage('Пакеты UC не найдены. Проверь каталог Nexus.');
+      return;
     }
 
-    // Сервер возвращает именно data.products.
-    const products = Array.isArray(data.products)
-      ? data.products
-      : [];
+    const fragment = document.createDocumentFragment();
 
-    notice.textContent = products.length
-      ? `Каталог загружен: ${products.length} пакетов UC. Покупка пока отключена.`
-      : 'Nexus подключён, но пакеты UC не найдены.';
+    for (const p of products) {
+      const id = String(p.id || '');
+      const name = String(p.name || p.title || 'Пакет UC');
+      const match = id.match(/pubg-mobile:uc:(\d+)/i);
+      const amount = match ? Number(match[1]) : null;
+      const price = Number(p.price);
+      const validPrice = p.price !== null &&
+        p.price !== undefined &&
+        p.price !== '' &&
+        Number.isFinite(price);
 
-    render(products);
-  } catch (error) {
-    console.error('Catalog error:', error);
+      const card = document.createElement('article');
+      card.className = 'product';
 
-    notice.textContent =
-      'Не удалось загрузить каталог. Покупка отключена до проверки настроек.';
+      const coin = document.createElement('div');
+      coin.className = 'coin';
 
-    productsEl.innerHTML =
-      '<div class="empty">Каталог временно недоступен. Попробуй обновить страницу позже.</div>';
+      if (p.icon) {
+        const img = document.createElement('img');
+        img.src = p.icon;
+        img.alt = '';
+        img.loading = 'lazy';
+        img.onerror = () => {
+          const fallback = document.createElement('span');
+          fallback.textContent = 'UC';
+          img.replaceWith(fallback);
+        };
+        coin.appendChild(img);
+      } else {
+        const fallback = document.createElement('span');
+        fallback.textContent = 'UC';
+        coin.appendChild(fallback);
+      }
+
+      const qty = document.createElement('div');
+      qty.className = 'qty';
+      qty.textContent = amount !== null
+        ? `${amount.toLocaleString('en-US')} UC`
+        : name;
+
+      const desc = document.createElement('div');
+      desc.className = 'desc';
+      desc.textContent = 'PUBG MOBILE';
+
+      const priceEl = document.createElement('div');
+      priceEl.className = 'price';
+      priceEl.textContent = validPrice
+        ? `$${price.toFixed(2)}`
+        : 'Цена уточняется';
+
+      const button = document.createElement('button');
+      button.className = 'buy';
+      button.textContent = 'Скоро';
+      button.disabled = true;
+      button.title = 'Покупка пока не настроена';
+
+      card.append(coin, qty, desc, priceEl, button);
+      fragment.appendChild(card);
+    }
+
+    productsEl.appendChild(fragment);
   }
-}
 
-loadCatalog();
+  async function loadCatalog() {
+    showMessage('Загружаем пакеты UC…');
+
+    try {
+      const response = await fetch('/api/catalog', {
+        headers: { Accept: 'application/json' }
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || `HTTP ${response.status}`);
+      }
+
+      const products = Array.isArray(data.products)
+        ? data.products
+        : [];
+
+      notice.textContent = products.length
+        ? `Каталог загружен: ${products.length} пакетов UC. Покупка пока отключена.`
+        : 'Nexus подключён, но товары не найдены.';
+
+      render(products);
+    } catch (error) {
+      console.error('Ошибка каталога:', error);
+      notice.textContent = 'Не удалось загрузить каталог Nexus.';
+      showMessage('Каталог временно недоступен. Обнови страницу позже.');
+    }
+  }
+
+  loadCatalog();
+})();
 </script>
+</body>
+</html>
