@@ -180,6 +180,7 @@ app.post('/api/admin/login', loginLimit, requireDb, (req,res)=>{
   });
 });
 app.get('/api/admin/session',requireDb,requireAdmin,(req,res)=>res.set('Cache-Control','no-store').json({ok:true,csrfToken:req.session.csrfToken}));
+app.get('/api/admin/orders',requireDb,requireAdmin,async (_req,res)=>{ const r=await pool.query('SELECT public_id,product_name,product_id,player_id,amount_rub,status,admin_note,created_at,receipt_uploaded_at,reviewed_at,reviewed_by FROM manual_orders ORDER BY created_at DESC LIMIT 200'); res.set('Cache-Control','no-store').json({orders:r.rows}); });
 app.post('/api/admin/logout',requireDb,requireAdmin,requireCsrf,(req,res)=>req.session.destroy(e=>e?res.status(500).json({error:'Не удалось завершить сессию.'}):res.json({ok:true})));
 app.get('/api/admin/orders',requireDb,requireAdmin,async (_req,res)=>{
   const r=await pool.query('SELECT public_id,product_name,product_id,player_id,amount_rub,status,admin_note,created_at,receipt_uploaded_at,reviewed_at,reviewed_by FROM manual_orders ORDER BY created_at DESC LIMIT 200');
