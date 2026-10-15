@@ -31,7 +31,7 @@
 
 ## Проверки CI
 
-[Run #236](https://github.com/Beak67/zavaebatel-uc/actions/runs/38699952627) успешно выполнил `npm ci`, `node --check server.js && node --check public/admin.js && node --check public/storefront.js`, `npm test` и `npm audit --omit=dev` для application/test revision `003522133b0f8b8b23411e626f1cb10e0992275f`. CI использовал эфемерную PostgreSQL 16; команды выполнялись в GitHub Actions, не локально. Последующие изменения документации не меняют протестированный код/тесты. Это не production test.
+[Run #236](https://github.com/Beak67/zavaebatel-uc/actions/runs/38699952627) успешно проверил более раннюю ревизию `003522133b0f8b8b23411e626f1cb10e0992275f`; он не подтверждает последние изменения rate limiter. Для актуального HEAD нужно смотреть [последние CI runs](https://github.com/Beak67/zavaebatel-uc/actions), включая новые тесты 100 параллельных инкрементов, ошибки очистки и lock timeout. CI использует эфемерную PostgreSQL 16; команды выполняются в GitHub Actions, не локально. Это не production test.
 
 Интеграционные тесты допускают только loopback/localhost и имя БД с суффиксом `_test`; guard защищает от случайной ошибки, но не от вручную настроенного локального туннеля к production. Тесты проверяют два независимых PostgreSQL-backed store, превышение login-лимита, истечение/reset счётчика, ошибки store, audit rows и секретные поля, идемпотентность миграций и safe mode при `SBP_ENABLED=true`.
 
