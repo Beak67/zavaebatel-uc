@@ -29,7 +29,7 @@
 
 ## Проверки CI
 
-Последний проверенный commit: `25ba68a8e301f152487504ef5b1870d7ca36cd16`. [GitHub Actions run #98](https://github.com/Beak67/zavaebatel-uc/actions/runs/38693525905) завершился со статусом **success**. Успешны все шаги workflow:
+Последний полностью успешный CI-run — #98 на commit `25ba68a8e301f152487504ef5b1870d7ca36cd16`: [GitHub Actions run #98](https://github.com/Beak67/zavaebatel-uc/actions/runs/38693525905). После этого commit добавлены общий async error wrapper и регрессионный тест; текущий branch head — `e640a8ef51ab994c460089c5a2ed8002637b9b45`. Отдельный CI-run для последующих изменений пока не подтверждён. Поэтому успешный run #98 не доказывает прохождение тестов на текущем HEAD. Результаты run #98:
 - `npm ci`;
 - `node --check server.js && node --check public/admin.js && node --check public/storefront.js`;
 - `npm test` (включая smoke tests и интеграционные тесты с эфемерным PostgreSQL 16);
