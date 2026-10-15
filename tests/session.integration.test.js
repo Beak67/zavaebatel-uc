@@ -62,13 +62,13 @@ test('PostgreSQL-backed admin sessions, login, CSRF, logout, and safe-mode admin
     assert.equal(unauth.status, 401);
 
     const wrongOrigin = await fetch(app.base + '/api/admin/login', {
-      method: 'POST', headers: { 'content-type': 'application/json', origin: 'https://attacker.invalid' },
+      method: 'POST', headers: { 'content-type': 'application/json', origin: 'https://attacker.invalid', 'x-forwarded-proto': 'https' },
       body: JSON.stringify({ password: ADMIN_PASSWORD })
     });
     assert.equal(wrongOrigin.status, 403);
 
     const badLogin = await fetch(app.base + '/api/admin/login', {
-      method: 'POST', headers: { 'content-type': 'application/json', origin: app.base },
+      method: 'POST', headers: { 'content-type': 'application/json', origin: app.base, 'x-forwarded-proto': 'https' },
       body: JSON.stringify({ password: 'incorrect-password' })
     });
     assert.equal(badLogin.status, 401);
