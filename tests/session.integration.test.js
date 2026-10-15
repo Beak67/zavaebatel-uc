@@ -74,7 +74,7 @@ test('PostgreSQL-backed admin sessions, login, CSRF, logout, and safe-mode admin
     assert.equal(badLogin.status, 401);
 
     const login = await fetch(app.base + '/api/admin/login', {
-      method: 'POST', headers: { 'content-type': 'application/json', origin: app.base },
+      method: 'POST', headers: { 'content-type': 'application/json', origin: app.base, 'x-forwarded-proto': 'https' },
       body: JSON.stringify({ password: ADMIN_PASSWORD })
     });
     assert.equal(login.status, 200);
@@ -135,7 +135,7 @@ test('unavailable PostgreSQL session storage fails closed and never falls back t
     assert.equal(health.status, 503);
 
     const login = await fetch(app.base + '/api/admin/login', {
-      method: 'POST', headers: { 'content-type': 'application/json', origin: app.base },
+      method: 'POST', headers: { 'content-type': 'application/json', origin: app.base, 'x-forwarded-proto': 'https' },
       body: JSON.stringify({ password: ADMIN_PASSWORD })
     });
     assert.equal(login.status, 503);
