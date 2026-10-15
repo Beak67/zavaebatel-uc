@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:net';
-import { createHmac } from 'node:crypto';
+import { createHmac, createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import pg from 'pg';
 import { PostgresRateLimitStore } from '../server.js';
@@ -79,36 +79,118 @@ test('PostgreSQL migration is executable and idempotent on the isolated test dat
   }
 });
 
-test('independent PostgreSQL rate-limit stores share atomic counters, expire windows, and fail closed on storage errors', { skip: !TEST_DATABASE_URL ? 'TEST_DATABASE_URL is not configured; CI runs this test with a local PostgreSQL service.' : false }, async () => {
+test('independent PostgreSQL rate-limit stores preserve atomic increments under real concurrency', { skip: !TEST_DATABASE_URL ? 'TEST_DATABASE_URL is not configured; CI runs this test with a local PostgreSQL service.' : false }, async () => {
   assertSafeTestDatabaseUrl(TEST_DATABASE_URL);
   const { Pool } = pg;
   const pool = new Pool({ connectionString: TEST_DATABASE_URL, ssl: false, connectionTimeoutMillis: 3000 });
   const limiterName = 'integration-shared-counter-test';
+  const clientKey = 'synthetic-client';
+  const keyHash = createHash('sha256').update(clientKey).digest('hex');
   try {
     await pool.query('DELETE FROM rate_limit_counters WHERE limiter_name = $1', [limiterName]);
     const firstInstance = new PostgresRateLimitStore({ pool, limiterName });
     const secondInstance = new PostgresRateLimitStore({ pool, limiterName });
-    firstInstance.init({ windowMs: 500 });
-    secondInstance.init({ windowMs: 500 });
-    const simultaneous = await Promise.all([firstInstance.increment('synthetic-client'), secondInstance.increment('synthetic-client')]);
-    assert.deepEqual(simultaneous.map(item => item.totalHits).sort((a,b) => a-b), [1, 2]);
-    const storedKey = await pool.query('SELECT key_hash FROM rate_limit_counters WHERE limiter_name = $1', [limiterName]);
-    assert.equal(storedKey.rows.length, 1);
-    assert.match(storedKey.rows[0].key_hash, /^[a-f0-9]{64}$/);
-    assert.notEqual(storedKey.rows[0].key_hash, 'synthetic-client', 'raw client keys must not be stored');
-    await new Promise(resolve => setTimeout(resolve, 600));
-    assert.equal((await secondInstance.increment('synthetic-client')).totalHits, 1, 'expired counter must reset');
-    await firstInstance.resetKey('synthetic-client');
-    assert.equal((await secondInstance.increment('synthetic-client')).totalHits, 1, 'resetKey must clear shared counter');
+    firstInstance.init({ windowMs: 60_000 });
+    secondInstance.init({ windowMs: 60_000 });
+    const total = 100;
+    const simultaneous = await Promise.all(Array.from({ length: total }, (_, i) =>
+      (i % 2 === 0 ? firstInstance : secondInstance).increment(clientKey)));
+    assert.deepEqual(simultaneous.map(item => item.totalHits).sort((a,b) => a-b),
+      Array.from({ length: total }, (_, i) => i + 1),
+      'parallel increments must return each sequential counter value exactly once');
+    const stored = await pool.query('SELECT key_hash, hits FROM rate_limit_counters WHERE limiter_name = $1 AND key_hash = $2',
+      [limiterName, keyHash]);
+    assert.equal(stored.rows.length, 1, 'one limiter/key pair must occupy exactly one row');
+    assert.equal(Number(stored.rows[0].hits), total, 'persisted count must equal successful increments');
+    assert.match(stored.rows[0].key_hash, /^[a-f0-9]{64}$/);
+    assert.notEqual(stored.rows[0].key_hash, clientKey, 'raw client keys must not be stored');
+
+    // Expire the row deterministically in the isolated test database rather than relying on
+    // scheduling a sleep that could overlap the high-concurrency phase.
+    await pool.query("UPDATE rate_limit_counters SET reset_at = NOW() - INTERVAL '1 second' WHERE limiter_name = $1 AND key_hash = $2",
+      [limiterName, keyHash]);
+    assert.equal((await secondInstance.increment(clientKey)).totalHits, 1, 'expired counter must reset');
+    await firstInstance.resetKey(clientKey);
+    assert.equal((await secondInstance.increment(clientKey)).totalHits, 1, 'resetKey must clear shared counter');
   } finally {
     await pool.query('DELETE FROM rate_limit_counters WHERE limiter_name = $1', [limiterName]).catch(()=>{});
     await pool.end();
   }
   const noStore = new PostgresRateLimitStore({ pool: null, limiterName: 'missing-store-test' });
   await assert.rejects(noStore.increment('client'), error => error.code === 'RATE_LIMIT_STORE_UNAVAILABLE');
-  const failingStore = new PostgresRateLimitStore({ pool: { query: async () => { throw new Error('sensitive database detail'); } }, limiterName: 'failure-test' });
-  await assert.rejects(failingStore.increment('client'), error =>
-    error.code === 'RATE_LIMIT_STORE_UNAVAILABLE' && !error.message.includes('sensitive database detail'));
+});
+
+test('rate-limit increment ignores cleanup failure but fails closed when the UPSERT fails', async () => {
+  const warnings = [];
+  const originalWarn = console.warn;
+  console.warn = (...args) => warnings.push(args);
+  try {
+    const cleanupStore = new PostgresRateLimitStore({
+      limiterName: 'cleanup-failure-test',
+      pool: { query: async sql => {
+        if (sql.includes('INSERT INTO rate_limit_counters')) {
+          return { rows: [{ hits: 17, reset_at: new Date('2030-01-01T00:00:00Z') }] };
+        }
+        if (sql.includes('DELETE FROM rate_limit_counters')) throw Object.assign(new Error('secret connection details'), { code: 'XX000' });
+        throw new Error('unexpected query');
+      } }
+    });
+    cleanupStore.operations = 99;
+    const result = await cleanupStore.increment('synthetic-cleanup-client');
+    assert.equal(result.totalHits, 17, 'successful UPSERT result must be returned even if ancillary cleanup fails');
+    assert.equal(warnings.length, 1, 'cleanup failure must be observable');
+    assert.equal(warnings[0][0], 'rate_limit_cleanup_failed');
+    assert.doesNotMatch(JSON.stringify(warnings), /secret connection details|synthetic-cleanup-client/i);
+
+    const failedUpsert = new PostgresRateLimitStore({
+      limiterName: 'upsert-failure-test',
+      pool: { query: async sql => {
+        if (sql.includes('INSERT INTO rate_limit_counters')) throw Object.assign(new Error('secret database detail'), { code: '42501' });
+        throw new Error('unexpected query');
+      } }
+    });
+    await assert.rejects(failedUpsert.increment('synthetic-upsert-client'), error =>
+      error.code === 'RATE_LIMIT_STORE_UNAVAILABLE' && error.status === 503 &&
+      error.message === 'Shared rate-limit storage is unavailable' &&
+      !error.message.includes('secret database detail'));
+  } finally {
+    console.warn = originalWarn;
+  }
+});
+
+test('rate-limit UPSERT fails closed on a PostgreSQL lock timeout', { skip: !TEST_DATABASE_URL ? 'TEST_DATABASE_URL is not configured; CI runs this test with a local PostgreSQL service.' : false }, async () => {
+  assertSafeTestDatabaseUrl(TEST_DATABASE_URL);
+  const { Pool } = pg;
+  const setupPool = new Pool({ connectionString: TEST_DATABASE_URL, ssl: false, connectionTimeoutMillis: 1000 });
+  const timeoutPool = new Pool({
+    connectionString: TEST_DATABASE_URL, ssl: false, max: 2,
+    connectionTimeoutMillis: 1000, query_timeout: 2500, statement_timeout: 2000, lock_timeout: 300
+  });
+  const limiterName = 'integration-rate-limit-timeout-test';
+  const clientKey = 'synthetic-timeout-client';
+  const keyHash = createHash('sha256').update(clientKey).digest('hex');
+  const blocker = await setupPool.connect();
+  try {
+    await setupPool.query('DELETE FROM rate_limit_counters WHERE limiter_name = $1', [limiterName]);
+    await setupPool.query('INSERT INTO rate_limit_counters (limiter_name, key_hash, hits, reset_at) VALUES ($1, $2, 1, NOW() + INTERVAL \'1 minute\')',
+      [limiterName, keyHash]);
+    await blocker.query('BEGIN');
+    await blocker.query('UPDATE rate_limit_counters SET hits = hits + 1 WHERE limiter_name = $1 AND key_hash = $2',
+      [limiterName, keyHash]);
+    const store = new PostgresRateLimitStore({ pool: timeoutPool, limiterName });
+    store.init({ windowMs: 60_000 });
+    const started = Date.now();
+    await assert.rejects(store.increment(clientKey), error =>
+      error.code === 'RATE_LIMIT_STORE_UNAVAILABLE' && error.status === 503,
+      'a timed-out main UPSERT must fail closed without a local fallback');
+    assert.ok(Date.now() - started < 1500, 'lock timeout must bound the failed request');
+  } finally {
+    await blocker.query('ROLLBACK').catch(()=>{});
+    blocker.release();
+    await setupPool.query('DELETE FROM rate_limit_counters WHERE limiter_name = $1', [limiterName]).catch(()=>{});
+    await timeoutPool.end();
+    await setupPool.end();
+  }
 });
 
 async function freePort() {
