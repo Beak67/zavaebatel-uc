@@ -66,6 +66,30 @@ test('handles a network-level Nexus outage with bounded retries', async () => {
     assert.equal(calls, 2);
   } finally { globalThis.fetch = original; }
 });
+
+test('production session configuration has no MemoryStore fallback and fails closed', async () => {
+  const source = await readFile(new URL('../server.js', import.meta.url), 'utf8');
+  assert.match(source, /connectPgSimple\(session\)/);
+  assert.match(source, /createTableIfMissing:\s*false/);
+  assert.doesNotMatch(source, /new session\.MemoryStore|MemoryStore\s*\(/);
+  assert.doesNotMatch(source, /development-only-not-for-production/);
+  assert.match(source, /secure:\s*process\.env\.NODE_ENV\s*===\s*'production'/);
+  assert.match(source, /sameSite:\s*'strict'/);
+  assert.match(source, /maxAge:\s*4\s*\*\s*60\s*\*\s*60\s*\*\s*1000/);
+  assert.match(source, /function requireCsrf/);
+  assert.match(source, /function requireSameOrigin/);
+  assert.match(source, /SESSION_SECRET\.length\s*>=\s*32/);
+  assert.match(source, /ADMIN_PASSWORD\.length\s*<\s*20/);
+});
+
+test('database migration is additive and never rewrites order statuses', async () => {
+  const migration = await readFile(new URL('../migrations/001_session_store_and_safe_admin.sql', import.meta.url), 'utf8');
+  assert.match(migration, /CREATE TABLE IF NOT EXISTS user_sessions/);
+  assert.match(migration, /CREATE TABLE IF NOT EXISTS admin_audit/);
+  assert.match(migration, /ADD COLUMN IF NOT EXISTS reviewed_by/);
+  assert.doesNotMatch(migration, /DROP TABLE|TRUNCATE|DELETE FROM|UPDATE manual_orders|ALTER COLUMN status/i);
+});
+
 test('public assets contain no configured test credentials', async () => {
   for (const file of ['public/index.html', 'public/storefront.js', 'public/admin.js', 'public/logo.svg', 'admin.html']) {
     const content = await readFile(new URL('../' + file, import.meta.url), 'utf8');
