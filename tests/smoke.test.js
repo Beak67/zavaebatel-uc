@@ -89,7 +89,8 @@ test('Render routes, public assets, missing files and disabled sales', async () 
     assert.match(html, /ZAVAEBATEL UC/);
     assert.match(html, /src="\/storefront\.js"/);
     assert.match(home.headers.get('content-security-policy') || '', /script-src 'self'/);
-    assert.doesNotMatch(home.headers.get('content-security-policy') || '', /unsafe-inline.*script-src/);
+    const scriptDirective = (home.headers.get('content-security-policy') || '').split(';').find(part => part.trim().startsWith('script-src ')) || '';
+    assert.doesNotMatch(scriptDirective, /unsafe-inline/);
     assert.equal((await fetch(url + '/logo.svg')).status, 200);
     assert.equal((await fetch(url + '/storefront.js')).status, 200);
     assert.equal((await fetch(url + '/admin.js')).status, 200);
