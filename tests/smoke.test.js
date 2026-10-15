@@ -112,7 +112,7 @@ test('schema readiness rejects missing required PostgreSQL columns', () => {
     manual_orders: ['public_id', 'access_secret_hash', 'product_id', 'product_name', 'player_id',
       'amount_rub', 'status', 'receipt_data', 'receipt_mime', 'receipt_uploaded_at', 'admin_note',
       'reviewed_at', 'reviewed_by', 'created_at'],
-    admin_audit: ['order_public_id', 'action', 'result', 'admin_identity', 'created_at', 'request_id', 'reason_code', 'target_type', 'target_id', 'session_hash'],
+    admin_audit: ['order_public_id', 'action', 'operation_type', 'result', 'admin_identity', 'created_at', 'request_id', 'reason_code', 'target_type', 'target_id', 'session_hash'],
     rate_limit_counters: ['limiter_name', 'key_hash', 'hits', 'reset_at']
   };
   const rows = Object.entries(columns).flatMap(([table_name, names]) => names.map(column_name => ({ table_name, column_name })));
