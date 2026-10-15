@@ -17,9 +17,9 @@ function assertSafeTestDatabaseUrl(value) {
   }
   const host = parsed.hostname.toLowerCase();
   const database = decodeURIComponent(parsed.pathname.replace(/^\//, ''));
-  const localHost = ['localhost', '127.0.0.1', '::1', '[::1]', 'postgres'].includes(host);
+  const localHost = ['localhost', '127.0.0.1', '::1', '[::1]'].includes(host);
   if (!['postgres:', 'postgresql:'].includes(parsed.protocol) || !localHost || !database.endsWith('_test')) {
-    throw new Error('Refusing integration test: TEST_DATABASE_URL must target localhost/loopback or the CI postgres service and a database name ending in _test. No connection was attempted.');
+    throw new Error('Refusing integration test: TEST_DATABASE_URL must target a loopback host only and a database name ending in _test. No connection was attempted.');
   }
   return true;
 }
