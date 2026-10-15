@@ -7,9 +7,17 @@ import { readFile } from 'node:fs/promises';
 process.env.NEXUS_PRICE_CURRENCY = 'USD';
 process.env.NEXUS_USD_RUB = '85';
 process.env.SALE_MARKUP = '0.20';
-const { default: app, normalizeProducts, retailPrice, getCatalog } = await import('../server.js');
+const { default: app, normalizeProducts, retailPrice, getCatalog, asyncHandler } = await import('../server.js');
 process.env.NEXUS_SHOP_ID = 'test-shop';
 process.env.NEXUS_SHOP_TOKEN = 'test-token';
+
+test('async route wrapper forwards rejected promises to Express error middleware', async () => {
+  const failure = new Error('database query failed');
+  let received;
+  const handler = asyncHandler(async () => { throw failure; });
+  await handler({}, {}, error => { received = error; });
+  assert.equal(received, failure);
+});
 
 test('normalizes UC products and excludes unrelated product IDs', () => {
   assert.deepEqual(normalizeProducts({ products: [
