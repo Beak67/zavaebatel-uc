@@ -1,95 +1,58 @@
 # ZAVAEBATEL UC — безопасная ветка аудита
 
-## Production-аудит Render
+## Текущий режим безопасности
 
-Задеплоенный commit `ed70726037e2f9cc4a332aa8738157278e93d561` был проверен отдельно от этой ветки. В production-коде был fallback на `express-session` MemoryStore с фиксированным development-секретом, отсутствовала CSRF-проверка административных POST-маршрутов, а `express.static(currentDir)` публиковал файлы из корня проекта. В той версии маршруты создания заказов и загрузки чеков могли активироваться через `SBP_ENABLED=true`.
+Приложение показывает каталог и рассчитанные сервером цены при доступности Nexus. **Реальные покупки и операции исполнения намеренно отключены в коде** независимо от значения `SBP_ENABLED`:
 
-Исправления ниже находятся в `security/audit-safe-storefront`; они не попадают в Render до отдельного согласованного изменения deployment.
-
-## Режим безопасности
-
-- `POST /api/orders` и `POST /api/orders/:id/receipt` всегда возвращают HTTP 503.
+- `POST /api/orders` и `POST /api/orders/:publicId/receipt` возвращают HTTP 503.
 - `GET /api/payment-info` всегда сообщает, что платежи отключены.
-- Административные действия изменения статуса, подтверждения платежа и выдачи UC также возвращают HTTP 503.
-- Сервер не создаёт заказы у Nexus и не выдаёт UC автоматически.
-- Статические файлы обслуживаются только из `public/`; корневые файлы проекта не публикуются.
-- CSP включает `script-src 'self'`; Helmet устанавливает защитные заголовки.
-- Секреты, пароли и cookie не должны попадать в репозиторий или логи.
+- Административные изменения статуса, подтверждение оплаты и выдача UC возвращают HTTP 503.
+- Автоматическая отправка заказов в Nexus и выдача UC не выполняются.
+- Статические файлы обслуживаются из `public/`; `/admin` — отдельная явно заданная страница `admin.html`. Корневые файлы вроде `server.js`, `package.json`, `.env` и README не доступны через static middleware.
+- Helmet устанавливает security headers; CSP ограничивает скрипты `'self'`, а inline script не разрешён.
+- SQL-запросы с пользовательскими значениями используют параметры PostgreSQL (`$1`, `$2`); динамический SQL из пользовательского ввода не используется.
+- При отсутствии PostgreSQL/схемы/секретов административные API закрываются fail-closed; fallback на MemoryStore отсутствует.
 
-## Сессии и PostgreSQL
+## Сессии, CSRF и proxy
 
-- В production нет fallback на `MemoryStore`. Если PostgreSQL или `SESSION_SECRET` не настроены, административная функциональность закрывается с HTTP 503.
-- Сессии хранятся в PostgreSQL через `connect-pg-simple`; `createTableIfMissing: false`, поэтому session store не создаёт таблицу скрытно.
-- Cookie: `HttpOnly`, `Secure` при `NODE_ENV=production`, `SameSite=Strict`, путь `/`, фиксированный срок действия 4 часа с момента входа (без продления при активности).
-- При входе идентификатор сессии регенерируется; пароль сравнивается constant-time; logout уничтожает серверную сессию и очищает cookie.
-- CSRF-токен обязателен для административных изменяющих запросов. Для login обязателен Origin, который должен совпадать с Host запроса.
-- Rate limits действуют на login, создание заказа и загрузку чека. Последние два маршрута дополнительно заблокированы независимо от переменных окружения.
-- Ошибки хранилища возвращают безопасный ответ 503; логируются только тип/код ошибки, не connection string, токены, cookie или пользовательские данные.
-- `TRUST_PROXY_HOPS` задаёт количество доверенных reverse-proxy hops. Для Render обычно требуется `1`, но подтвердите топологию сервиса перед настройкой. В production административные маршруты возвращают HTTP 503, если эта настройка отсутствует или некорректна.
-- TLS-сертификат удалённой PostgreSQL проверяется (`rejectUnauthorized: true`). `PGSSL_CA` можно задать, если нужен дополнительный CA.
+- Сессии хранятся в PostgreSQL через `connect-pg-simple`; `createTableIfMissing: false`.
+- Cookie: `HttpOnly`, `SameSite=Strict`, `Secure` при `NODE_ENV=production`, срок действия 4 часа.
+- Идентификатор сессии регенерируется после успешного входа; logout удаляет серверную сессию.
+- Изменяющие административные запросы требуют CSRF-токен; login требует Origin, совпадающий с Host запроса.
+- Login ограничен rate limit. Заказы и загрузка чеков дополнительно блокируются независимо от переменных окружения.
+- `TRUST_PROXY_HOPS` должен соответствовать реальной топологии proxy. Значение `1` в `.env.example` — пример, не подтверждение Render-настройки. Неправильное число hops может повлиять на определение IP и secure cookies; перед production подтвердите topology.
+- TLS для удалённого PostgreSQL настроен с `rejectUnauthorized: true`; `PGSSL_CA` может задавать CA.
 
-## PostgreSQL schema и миграция
+## PostgreSQL и миграции
 
-Миграция `migrations/001_session_store_and_safe_admin.sql` создаёт отсутствующие таблицы `user_sessions`, `manual_orders`, `admin_audit`, индекс и добавляет только отсутствующую колонку `reviewed_by`. Она не удаляет таблицы и не переписывает статусы заказов. Перед запуском на любой существующей БД сделайте резервную копию и проверьте SQL на отдельной тестовой базе.
+Миграция `migrations/001_session_store_and_safe_admin.sql` является аддитивной: создаёт отсутствующие таблицы/индексы и добавляет отсутствующую колонку `reviewed_by`. Она не удаляет таблицы и не переписывает статусы заказов. До применения на существующей БД сделайте резервную копию и проверьте миграцию на отдельной тестовой базе. Рекомендуется `DB_AUTO_INIT=false` после явного применения миграции.
 
-Рекомендуемый порядок:
-1. Создайте PostgreSQL в Render.
-2. В Render Database используйте Query/SQL-инструмент либо подключённый безопасный клиент, чтобы применить миграцию к нужной БД. Не публикуйте Internal Database URL.
-3. Убедитесь, что миграция прошла успешно, а существующие строки и статусы не изменились.
-4. В Web Service установите `DB_AUTO_INIT=false`. При старте приложение проверяет наличие требуемых таблиц, но не изменяет схему.
-5. Если вы намеренно используете `DB_AUTO_INIT=true`, код выполняет только `CREATE TABLE IF NOT EXISTS`, `CREATE INDEX IF NOT EXISTS` и `ADD COLUMN IF NOT EXISTS`; всё равно предпочтительна явная миграция с проверкой результата.
+## Проверки CI
 
-## Обязательные переменные Render
+Последний проверенный commit: `25ba68a8e301f152487504ef5b1870d7ca36cd16`. [GitHub Actions run #98](https://github.com/Beak67/zavaebatel-uc/actions/runs/38693525905) завершился со статусом **success**. Успешны все шаги workflow:
+- `npm ci`;
+- `node --check server.js && node --check public/admin.js && node --check public/storefront.js`;
+- `npm test` (включая smoke tests и интеграционные тесты с эфемерным PostgreSQL 16);
+- `npm audit --omit=dev`.
 
-Задавайте значения в Render → Web Service → Environment как private environment variables. Не копируйте реальные значения в GitHub, README или логи.
+Lockfile `package-lock.json` версии 3 включён в репозиторий; успешный `npm ci` в run #98 подтверждает, что установка зависимостей с ним прошла в CI. Это не утверждение об отсутствии всех возможных уязвимостей или об исправности production.
 
-- `NODE_ENV=production`
-- `DATABASE_URL` — Internal Database URL для PostgreSQL Render; подключение должно быть доступно сервису.
-- `ADMIN_PASSWORD` — уникальный длинный пароль, минимум 20 символов.
-- `SESSION_SECRET` — криптографически случайная строка минимум 32 символа; не переиспользуйте пароль администратора.
-- `DB_AUTO_INIT=false` после ручного применения миграции.
-- `TRUST_PROXY_HOPS=1` только если сервис находится за одним доверенным proxy hop (типичный Render web service).
-- `NEXUS_API_BASE`, `NEXUS_SHOP_ID`, `NEXUS_SHOP_TOKEN`, `NEXUS_PRICE_CURRENCY=USD`, `NEXUS_USD_RUB`, `SALE_MARKUP` — нужны только для чтения каталога и расчёта отображаемой цены; реальные credentials не включайте в тесты.
-- `PGSSL_CA` — необязательный CA для PostgreSQL, если требуется вашей конфигурации.
+Подробности, покрытие и ограничения описаны в [SECURITY_AUDIT.md](SECURITY_AUDIT.md).
 
-Секрет сессии можно сгенерировать локально командой `openssl rand -hex 32`; вывод команды не добавляйте в репозиторий или issue. Убедитесь, что пароль администратора и session secret не пусты и не совпадают.
+## Что не проверено / блокеры перед production
 
-## Render configuration
+- Не проверялись Render Dashboard, Render environment variables, текущий deployment и TLS termination.
+- Не подключались к production PostgreSQL; фактическая схема, права пользователя БД, резервные копии и восстановление не проверялись.
+- Не проверялись реальные admin cookies/login на домене Render и фактическое количество доверенных proxy hops.
+- Не вызывался Nexus API с реальными credentials; не подтверждались контракт поставщика, ограничения и production-цены.
+- Не выполнялись реальные заказы, платежи, загрузка чеков, выдача UC или production deploy.
+- Нужны отдельное ревью владельца, проверка конфигурации Render и согласованный тестовый план до любого production deployment.
+- Покупки/платежи/receipt upload/fulfillment должны оставаться выключенными до отдельного проектирования, threat review, реализации и тестирования. Не включайте их изменением env-переменной.
 
-В репозитории нет `render.yaml`. Проверяйте параметры непосредственно в Render Dashboard:
+## Render — только после отдельного согласования
 
-- Build command: `npm ci`
-- Start command: `node server.js`
-- Runtime: Node.js 20+
-- `NODE_ENV=production`
-- переменные окружения из списка выше
-- Persistent PostgreSQL instance, доступный по Internal Database URL
-- автоматический production deploy не запускать в рамках этого аудита.
-
-После отдельного согласованного deploy проверьте `GET /api/health`: при доступной БД и правильной схеме ожидается HTTP 200; при отсутствии БД/таблиц — HTTP 503. Health check не доказывает, что реальная админ-сессия работает; для этого нужна отдельная проверка через тестовую БД.
-
-## Проверки и ограничения
-
-Workflow `.github/workflows/test.yml` запускает `npm ci`, `npm test` и `npm audit --omit=dev` в Node.js 20. Интеграционные тесты сессий используют только эфемерный PostgreSQL с тестовыми credentials в CI; они не обращаются к Render, Nexus или реальным платежам.
-
-`package-lock.json` включён в репозиторий: `lockfileVersion: 3`, совместим с npm 9/10 и Node.js 20. Его пригодность для clean install подтверждена успешным `npm ci` в GitHub Actions, а не только статической проверкой файла.
-
-Последний подтверждённый успешный run для актуального на момент проверки commit `92ba235d78133969887533a6c345fd3fc52f8f4a`: [GitHub Actions run #92](https://github.com/Beak67/zavaebatel-uc/actions/runs/38692461525).
-- `npm ci`: **success**.
-- `npm test`: **success**; workflow завершил шаг тестов без ошибок.
-- `npm audit --omit=dev`: **success**, 0 vulnerabilities согласно выводу run.
-
-Workflow запускает эти три шага последовательно в Node.js 20 с эфемерной PostgreSQL для интеграционных тестов. Не запускайте тесты против production `DATABASE_URL`. Изменения после этого commit потребуют нового CI-run; результаты выше не следует автоматически переносить на будущие коммиты.
-
-## Что осталось непроверенным
-
-- Render Environment и фактическая конфигурация сервиса не читались напрямую; проверить настройки Dashboard вручную.
-- Не подключались к production PostgreSQL и не проверялись реальные credentials.
-- Не проверялись реальные login/session cookies на домене Render, TLS termination и количество proxy hops.
-- Nexus API не вызывался; контракт поставщика и реальные токены не проверялись.
-- Не выполнялись реальные заказы, платежи, загрузка чеков или выдача UC.
-- Успешные CI и npm audit не доказывают безопасность всего production-приложения.
+Рекомендуемые команды: Build `npm ci`, Start `node server.js`, Node.js 20+. Задавайте private environment variables в Render Dashboard, не в GitHub. `DATABASE_URL`, `ADMIN_PASSWORD`, `SESSION_SECRET` и Nexus token не должны попадать в issue, коммиты или логи. `TRUST_PROXY_HOPS` задавайте только после подтверждения сетевой топологии. Автоматический deploy в рамках этого аудита не выполнялся.
 
 ## Откат
 
-Эта работа не выполняет deploy, не меняет `main` и не сливает PR. После отдельного согласованного deploy откатывайтесь штатным rollback Render к предыдущему успешному deploy; не переписывайте историю Git.
+Эта работа не изменяет `main`, не выполняет merge, не запускает deploy и не изменяет production БД. Для отката после будущего согласованного deploy используйте штатный rollback хостинга, не переписывая историю Git.
