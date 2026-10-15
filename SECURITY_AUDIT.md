@@ -2,8 +2,8 @@
 
 **Scope:** repository review and safe CI tests on `security/audit-safe-storefront`. No production deployment, production configuration change, production database connection, real order/payment/receipt upload, or UC fulfillment was performed.
 
-**Audit implementation revision:** `f9f4059ff0a398be59d60033b7e741a79de3008a`  
-**CI evidence for this revision:** validation runs [#192](https://github.com/Beak67/zavaebatel-uc/actions/runs/38699162186) and [#193](https://github.com/Beak67/zavaebatel-uc/actions/runs/38699168899) were still in progress when this section was drafted. Earlier CI results validate an older revision and are not evidence that these changes pass. This report must be updated after the current-revision runs finish; no pending result is described as PASS.
+**Application/test revision:** `003522133b0f8b8b23411e626f1cb10e0992275f`  
+**CI evidence:** [Run #236](https://github.com/Beak67/zavaebatel-uc/actions/runs/38699952627) completed successfully on this application/test revision. The actual GitHub Actions job steps report success for `npm ci`, JavaScript syntax checks, `npm test`, and `npm audit --omit=dev`. The workflow ran against its isolated PostgreSQL 16 service. No production environment was used. Later documentation-only commits do not change the application/test code.
 
 ## Decision
 
@@ -17,8 +17,9 @@ Status definitions: **PASS** means supported by the named code review/test/evide
 |---|---|
 | PASS | `server.js`: Express trusts forwarded headers only when `TRUST_PROXY_HOPS` parses as an integer from 1 through 5; production admin routes fail closed if it is absent/invalid. This is a guard, not proof that the configured hop count is correct. |
 | PASS | `server.js`: session cookie uses `HttpOnly`, `SameSite=Strict`, `Secure` when `NODE_ENV=production`, path `/`, four-hour `maxAge`, and no rolling refresh. Login regenerates the session ID and saves the new session. `tests/session.integration.test.js` checks cookie attributes, login and logout against the test PostgreSQL service. |
-| PASS (implementation; CI pending) | Login is limited to 8 attempts per 15 minutes, order creation to 10 per hour and receipt upload to 5 per hour. All three use the custom PostgreSQL-backed store and preserve the existing thresholds. Login requires a same-host Origin; admin mutation routes require a session CSRF token. |
-| NOT VERIFIED | Shared counter behavior on multiple real Render instances and the deployed client-IP/proxy configuration. The integration test uses two independent store instances against the same isolated PostgreSQL database; this validates shared atomic counters at the database/store layer, not the actual Render topology. |
+| PASS | Login is limited to 8 attempts per 15 minutes, order creation to 10 per hour and receipt upload to 5 per hour. All three use the custom PostgreSQL-backed store and preserve existing thresholds. Integration tests confirm the login threshold returns 429 on the ninth request and audit that denial. |
+| PASS | Two independent store instances share atomic PostgreSQL counters; integration tests cover expiration/reset and fail-closed behavior when storage is absent or throws. Raw client keys are hashed before persistence. |
+| NOT VERIFIED | Shared behavior across actual Render instances and deployed client-IP/proxy attribution. CI validates separate store objects against the same isolated PostgreSQL service, not the real Render topology. |
 | PASS | Security headers/CSP are configured with Helmet in `server.js`; `tests/smoke.test.js` checks CSP script restrictions and that project files outside `public/` are not served as static assets. |
 | NOT VERIFIED | Render's actual proxy chain, TLS termination, domain/custom-domain settings, runtime Node version, build/start commands, environment-variable presence and whether the live service runs this branch. Verify in Render Dashboard before any deployment. Do not infer these values from `.env.example`. |
 | NOT VERIFIED | Real-browser cookie behavior and rate-limit client-IP attribution through the actual Render proxy chain. `express-rate-limit` uses its default per-process store here; if multiple instances are used, limits are not a shared global counter. Confirm instance topology or adopt a shared store before relying on a global attempt limit. |
@@ -31,8 +32,8 @@ Status definitions: **PASS** means supported by the named code review/test/evide
 |---|---|
 | PASS | Request-controlled identifiers in reviewed queries use PostgreSQL parameters (`$1`, `$2`) and order UUIDs are validated before lookup. Evidence: `server.js`. |
 | PASS | Remote PostgreSQL connections enable certificate verification (`rejectUnauthorized: true`); connection query parameters that could override SSL settings are stripped before constructing the pool. Evidence: `server.js`. This does not verify the real production connection configuration or CA chain. |
-| PASS (implementation; CI pending) | Migration `001_session_store_and_safe_admin.sql` remains additive. New `002_shared_rate_limits_and_audit.sql` creates shared rate-limit storage and adds audit metadata idempotently, making legacy `order_public_id` nullable for non-order events. Tests run both migrations twice against isolated CI PostgreSQL 16 and inspect expected columns/tables/indexes. |
-| PASS (implementation; CI pending) | Schema readiness checks required columns via `information_schema.columns`, including the rate-limit table and expanded audit fields. `tests/smoke.test.js` covers missing required columns; the PostgreSQL integration test provisions and exercises the expected schema. |
+| PASS | Migration `001_session_store_and_safe_admin.sql` remains additive. New `002_shared_rate_limits_and_audit.sql` creates shared rate-limit storage and adds audit metadata idempotently, making legacy `order_public_id` nullable for non-order events. Tests run both migrations twice against isolated CI PostgreSQL 16 and inspect expected columns/tables/indexes plus the unique key required by `ON CONFLICT`. |
+| PASS | Schema readiness checks required columns via `information_schema.columns`, including the rate-limit table and expanded audit fields, and verifies the exact unique/primary key needed for atomic rate-limit upserts. `tests/smoke.test.js` covers missing required columns and fail-closed constraint validation; the PostgreSQL integration test provisions and exercises the expected schema. |
 | PASS | `DB_AUTO_INIT` defaults to the verification path; initialization is opt-in. Session store table auto-creation by `connect-pg-simple` is disabled. Evidence: `server.js`, `.env.example`. |
 | NOT VERIFIED | Production schema, existing data compatibility, constraints/indexes on the real database, migration scheduling/ownership, connection pool sizing and actual DB-role privileges. The runtime role must be able to atomically insert/update rate-limit counters and delete expired/reset counters, and insert audit rows. No production DB connection or migration was attempted. |
 | NOT VERIFIED | Least-privilege grants. The repository does not establish what privileges the configured Render database role has; confirm using an approved read-only privilege review or a cloned environment. |
@@ -86,14 +87,14 @@ The test DB guard in `tests/session.integration.test.js` rejects non-loopback ho
 ### Medium — resolve or explicitly accept before launch
 
 1. **NOT VERIFIED — Admin authentication policy.** The code uses one configured admin password and has no demonstrated MFA/recovery process. Owner must validate credential rotation, recovery and access policy; add individual admin identities/MFA if required by the threat model.
-2. **PASS (implementation; CI pending) — Shared rate limiting.** All three limiters now use an atomic PostgreSQL UPSERT counter with a hashed client key and separate limiter namespace. No Redis or new service is required. Store failures return HTTP 503 rather than falling back to process-local counters. Apply migration 002 (or use the reviewed opt-in schema initializer) before relying on the limiter. Cross-process CI evidence and deployed Render topology still need confirmation.
-3. **PASS (implementation; CI pending) — Structured administrative audit coverage.** Login success/failure, Origin/CSRF/auth denials, prerequisite denials where the database is usable, admin session/order/receipt reads, safe-mode order/payment/fulfillment denials and admin request errors now attempt structured audit writes. Rows include UTC-capable `TIMESTAMPTZ`, action/result, request UUID, fixed reason code, safe target metadata and a SHA-256 session identifier hash; passwords, raw cookies/session IDs, CSRF tokens, receipt bytes and arbitrary error text are not fields. If the audit store is unavailable, successful login/reads are not returned as successful; blocked business operations remain blocked. **The table is not append-only or tamper-proof**: database-level permissions/retention controls have not been verified. Audit events cannot be persisted when PostgreSQL itself is unavailable.
+2. **PASS — Shared rate limiting.** All three limiters use atomic PostgreSQL UPSERT counters, hashed client keys and separate limiter namespaces. No Redis or new service is required. Store failures return HTTP 503 rather than falling back to process-local counters. Migration 002 (or the reviewed opt-in initializer) is required before relying on the limiter. CI validates independent store instances against one test database; actual Render topology and DB grants remain unverified.
+3. **PASS — Structured administrative audit coverage.** Login success/failure and rate-limit denials, Origin/CSRF/auth denials, prerequisite denials where the database is usable, admin session/order/receipt reads, safe-mode order/payment/fulfillment denials, logout outcomes and admin request errors attempt structured audit writes. Rows include `TIMESTAMPTZ`, event action, operation type, result, server-generated request UUID, fixed reason code, safe target metadata and a SHA-256 session identifier hash. Passwords, raw cookies/session IDs, CSRF tokens, receipt bytes and arbitrary error text are not audit fields. If the audit store is unavailable, successful login/reads are not returned as successful; blocked business operations remain blocked. **The table is not append-only or tamper-proof**: DB permissions/retention controls are unverified. Audit events cannot be persisted when PostgreSQL itself is unavailable. Future critical mutations must insert the audit row and update business data in the same database transaction; current mutation routes remain disabled.
 4. **NOT VERIFIED — Canonical origin policy.** Origin validation compares against the incoming Host rather than a separately configured canonical origin. Validate actual public-host/proxy behavior and consider an explicit allowlist.
 
 No critical defect was found that enables real transactions in the current code paths; that is not equivalent to a clean bill of health for production.
 ## 6. Changed files in this audit
 
-- `server.js` — PostgreSQL-backed rate-limit store, request IDs, structured audit writes, fail-closed store errors and schema checks.
+- `server.js` — PostgreSQL-backed rate-limit store, request IDs, structured audit writes, fail-closed store errors and column/unique-key schema checks.
 - `migrations/002_shared_rate_limits_and_audit.sql` — idempotent shared counter/audit schema migration.
 - `tests/smoke.test.js` — rate-limit fail-closed and schema/migration checks.
 - `tests/session.integration.test.js` — shared-counter concurrency/window-expiry/reset/store-failure tests, audit-row assertions, migration idempotence and safe-mode tests with `SBP_ENABLED=true`.
@@ -103,16 +104,16 @@ No changes to `main`, no merge, no deployment, no production environment changes
 
 ## 7. Tests and actual results
 
-**Current revision status:** runs #192 and #193 were in progress when this draft was written. The earlier successful CI run (#169/#179) applies to a prior code revision and does not validate this implementation.
+**CI run #236:** [workflow](https://github.com/Beak67/zavaebatel-uc/actions/runs/38699952627) completed successfully for application/test revision `003522133b0f8b8b23411e626f1cb10e0992275f`.
 
-| Required check | Status for the new revision |
+| Command | Actual result |
 |---|---|
-| `npm ci` | NOT VERIFIED — waiting for current CI |
-| JavaScript syntax checks | NOT VERIFIED — waiting for current CI |
-| `npm test` including PostgreSQL 16 migration/shared-counter tests | NOT VERIFIED — waiting for current CI |
-| `npm audit --omit=dev` | NOT VERIFIED — waiting for current CI |
+| `npm ci` | PASS — GitHub Actions step succeeded |
+| `node --check server.js && node --check public/admin.js && node --check public/storefront.js` | PASS — GitHub Actions step succeeded |
+| `npm test` | PASS — test step succeeded, including isolated PostgreSQL 16 integration tests |
+| `npm audit --omit=dev` | PASS — audit step succeeded |
 
-No local run is claimed. Update this table from the actual CI result before merge. The dependency audit, when green, covers production dependencies known to npm at that run; it does not prove the application is vulnerability-free or audit all development dependencies.
+These commands ran in GitHub Actions, not locally. The audit covers production dependencies known to npm at that run; it does not prove the application is vulnerability-free or audit all development dependencies. The current test revision is validated; production and Render remain unverified.
 
 ## 8. External checks required before merge/deployment
 
