@@ -98,28 +98,31 @@ async function initDb() {
     );
   `);
 }
-async function verifyDbSchema() {
-  // Verify required columns as well as table names; a table-only check can report ready
-  // for a stale/incompatible schema and defer the failure to an application request.
-  const required = {
-    user_sessions: ['sid', 'sess', 'expire'],
-    manual_orders: ['public_id', 'access_secret_hash', 'product_id', 'product_name', 'player_id',
-      'amount_rub', 'status', 'receipt_data', 'receipt_mime', 'receipt_uploaded_at', 'admin_note',
-      'reviewed_at', 'reviewed_by', 'created_at'],
-    admin_audit: ['order_public_id', 'action', 'result', 'admin_identity', 'created_at']
-  };
-  const result = await pool.query(
-    'SELECT table_name, column_name FROM information_schema.columns WHERE table_schema = $1 AND table_name = ANY($2::text[])',
-    ['public', Object.keys(required)]
-  );
+const requiredDbColumns = {
+  user_sessions: ['sid', 'sess', 'expire'],
+  manual_orders: ['public_id', 'access_secret_hash', 'product_id', 'product_name', 'player_id',
+    'amount_rub', 'status', 'receipt_data', 'receipt_mime', 'receipt_uploaded_at', 'admin_note',
+    'reviewed_at', 'reviewed_by', 'created_at'],
+  admin_audit: ['order_public_id', 'action', 'result', 'admin_identity', 'created_at']
+};
+export function missingRequiredSchemaColumns(rows) {
   const present = new Map();
-  for (const row of result.rows) {
+  for (const row of rows) {
     if (!present.has(row.table_name)) present.set(row.table_name, new Set());
     present.get(row.table_name).add(row.column_name);
   }
-  const missing = Object.entries(required).flatMap(([table, columns]) =>
+  return Object.entries(requiredDbColumns).flatMap(([table, columns]) =>
     columns.filter(column => !present.get(table)?.has(column)).map(column => table + '.' + column));
-  if (missing.length) throw Object.assign(new Error('Required database schema is missing or incompatible'), { code: 'DB_SCHEMA_MISSING' });
+}
+async function verifyDbSchema() {
+  // A table-only check can report ready for a stale schema and defer failure to a live request.
+  const result = await pool.query(
+    'SELECT table_name, column_name FROM information_schema.columns WHERE table_schema = $1 AND table_name = ANY($2::text[])',
+    ['public', Object.keys(requiredDbColumns)]
+  );
+  if (missingRequiredSchemaColumns(result.rows).length) {
+    throw Object.assign(new Error('Required database schema is missing or incompatible'), { code: 'DB_SCHEMA_MISSING' });
+  }
 }
 const dbReady = !pool
   ? Promise.resolve()
