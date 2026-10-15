@@ -194,6 +194,7 @@ function requireSameOrigin(req,res,next) {
     return res.status(403).json({ error:'Origin не разрешён.' });
   next();
 }
+const asyncHandler = fn => (req,res,next) => Promise.resolve(fn(req,res,next)).catch(next);
 function requireCsrf(req,res,next) {
   if (!req.session?.csrfToken || !safeEqual(req.get('x-csrf-token')||'',req.session.csrfToken)) return res.status(403).json({error:'CSRF-проверка не пройдена.'});
   next();
@@ -211,25 +212,25 @@ app.get('/admin', (_req,res,next)=> {
 });
 // Only the dedicated public directory is exposed; project files and secrets remain outside the static root.
 app.use(express.static(publicDir, { index:false, dotfiles:'deny', fallthrough:true, maxAge:0 }));
-app.get('/api/health', async (_req,res)=> {
+app.get('/api/health', asyncHandler(async (_req,res)=> {
   await dbReady;
   const database = !pool ? 'not_configured' : dbError ? 'error' : 'configured';
   const ok = Boolean(pool) && !dbError;
   res.status(ok ? 200 : 503).json({ ok, shop:'ZAVAEBATEL UC', database, ordersEnabled:false });
-});
-app.get('/api/catalog', async (_req,res)=>{
+}));
+app.get('/api/catalog', asyncHandler(async (_req,res)=>{
   try { const products=await getCatalog(); res.set('Cache-Control','no-store').json({mode:'live',currency:'RUB',count:products.length,products:products.map(p=>({id:p.id,name:p.name,icon:p.icon,price:retailPrice(p.priceUsd)}))}); }
   catch(e) { res.status(e.kind==='configuration'?503:502).json({error:e.message,code:e.kind||'catalog_unavailable'}); }
-});
+}));
 app.get('/api/payment-info', (_req,res)=>res.json({enabled:false,message:'Покупки и платёжные инструкции отключены. Не переводите деньги.'}));
 app.post('/api/orders', orderLimit, (_req,res)=>res.status(503).json({error:'Создание заказов отключено до отдельной проверки платёжного процесса.'}));
-app.get('/api/orders/:publicId', requireDb, async (req,res)=>{
+app.get('/api/orders/:publicId', requireDb, asyncHandler(async (req,res)=>{
   const secret=String(req.get('x-order-secret')||'');
   if (!validId(req.params.publicId)||secret.length<32) return res.status(404).json({error:'Заказ не найден.'});
   const r=await pool.query('SELECT public_id,product_name,amount_rub,status,created_at,receipt_uploaded_at FROM manual_orders WHERE public_id=$1 AND access_secret_hash=$2',[req.params.publicId,hash(secret)]);
   if (!r.rowCount) return res.status(404).json({error:'Заказ не найден.'});
   res.set('Cache-Control','no-store').json(r.rows[0]);
-});
+}));
 app.post('/api/orders/:publicId/receipt', receiptLimit, (_req,res)=>res.status(503).json({error:'Загрузка чеков отключена вместе с оформлением заказов.'}));
 app.post('/api/admin/login', loginLimit, requireSameOrigin, requireDb, (req,res)=>{
   if (!safeEqual(req.body?.password||'',process.env.ADMIN_PASSWORD||'')) return res.status(401).json({error:'Неверный пароль.'});
@@ -240,16 +241,16 @@ app.post('/api/admin/login', loginLimit, requireSameOrigin, requireDb, (req,res)
   });
 });
 app.get('/api/admin/session',requireDb,requireAdmin,(req,res)=>res.set('Cache-Control','no-store').json({ok:true,csrfToken:req.session.csrfToken}));
-app.get('/api/admin/orders',requireDb,requireAdmin,async (_req,res)=>{
+app.get('/api/admin/orders',requireDb,requireAdmin,asyncHandler(async (_req,res)=>{
   const r=await pool.query('SELECT public_id,product_name,product_id,player_id,amount_rub,status,admin_note,created_at,receipt_uploaded_at,reviewed_at,reviewed_by FROM manual_orders ORDER BY created_at DESC LIMIT 200');
   res.set('Cache-Control','no-store').json({orders:r.rows});
-});
-app.get('/api/admin/orders/:publicId/receipt',requireDb,requireAdmin,async(req,res)=>{
+}));
+app.get('/api/admin/orders/:publicId/receipt',requireDb,requireAdmin,asyncHandler(async(req,res)=>{
   if(!validId(req.params.publicId)) return res.sendStatus(404);
   const r=await pool.query('SELECT receipt_data,receipt_mime FROM manual_orders WHERE public_id=$1 AND receipt_data IS NOT NULL',[req.params.publicId]);
   if(!r.rowCount) return res.sendStatus(404);
   res.set({'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Content-Disposition':'attachment; filename="receipt"'}).type(r.rows[0].receipt_mime).send(r.rows[0].receipt_data);
-});
+}));
 app.post('/api/admin/logout',requireDb,requireAdmin,requireCsrf,(req,res)=>req.session.destroy(e=> {
   if (e) return res.status(500).json({error:'Не удалось завершить сессию.'});
   res.clearCookie('zuc.sid',{httpOnly:true,secure:process.env.NODE_ENV==='production',sameSite:'strict',path:'/'});
