@@ -49,7 +49,7 @@ test('PostgreSQL migration is executable and idempotent on the isolated test dat
              to_regclass('public.manual_orders') AS manual_orders,
              to_regclass('public.admin_audit') AS admin_audit,
              to_regclass('public.manual_orders_created_at_idx') AS orders_created_index,
-             to_regclass('public."IDX_user_sessions_expire"') AS sessions_expiry_index
+             to_regclass('public.idx_user_sessions_expire') AS sessions_expiry_index
     `);
     for (const [name, value] of Object.entries(result.rows[0])) assert.ok(value, name + ' must exist after two migration runs');
   } finally {
