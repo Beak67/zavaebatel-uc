@@ -2,8 +2,7 @@
 
 **Scope:** repository review and safe CI tests on `security/audit-safe-storefront`. No production deployment, production configuration change, production database connection, real order/payment/receipt upload, or UC fulfillment was performed.
 
-**Application/test revision:** `003522133b0f8b8b23411e626f1cb10e0992275f`  
-**CI evidence:** [Run #236](https://github.com/Beak67/zavaebatel-uc/actions/runs/38699952627) completed successfully on this application/test revision. The actual GitHub Actions job steps report success for `npm ci`, JavaScript syntax checks, `npm test`, and `npm audit --omit=dev`. The workflow ran against its isolated PostgreSQL 16 service. No production environment was used. Later documentation-only commits do not change the application/test code.
+**Previous CI evidence (historical):** [Run #236](https://github.com/Beak67/zavaebatel-uc/actions/runs/38699952627) passed an earlier application/test revision. It does not validate the rate-limit timeout/concurrency fixes described in the latest PR commits. Use the latest PR-head check results for final verification; production was not used.
 
 ## Decision
 
@@ -17,8 +16,8 @@ Status definitions: **PASS** means supported by the named code review/test/evide
 |---|---|
 | PASS | `server.js`: Express trusts forwarded headers only when `TRUST_PROXY_HOPS` parses as an integer from 1 through 5; production admin routes fail closed if it is absent/invalid. This is a guard, not proof that the configured hop count is correct. |
 | PASS | `server.js`: session cookie uses `HttpOnly`, `SameSite=Strict`, `Secure` when `NODE_ENV=production`, path `/`, four-hour `maxAge`, and no rolling refresh. Login regenerates the session ID and saves the new session. `tests/session.integration.test.js` checks cookie attributes, login and logout against the test PostgreSQL service. |
-| PASS | Login is limited to 8 attempts per 15 minutes, order creation to 10 per hour and receipt upload to 5 per hour. All three use the custom PostgreSQL-backed store and preserve existing thresholds. Integration tests confirm the login threshold returns 429 on the ninth request and audit that denial. |
-| PASS | Two independent store instances share atomic PostgreSQL counters; integration tests cover expiration/reset and fail-closed behavior when storage is absent or throws. Raw client keys are hashed before persistence. |
+| PASS (implementation review; current CI must confirm) | Login is limited to 8 attempts per 15 minutes, order creation to 10 per hour and receipt upload to 5 per hour. All three use the custom PostgreSQL-backed store and preserve existing thresholds. Integration tests confirm the login threshold returns 429 on the ninth request and audit that denial. The rate-limit store now uses a dedicated pg pool with a 1 s connection timeout, 500 ms lock timeout, 2 s server statement timeout and 2.5 s client query timeout; those bounds do not affect the general application/session pool. |
+| PASS (implementation review; current CI must confirm) | Two independent store instances share atomic PostgreSQL counters; updated integration tests launch 100 concurrent increments across two stores and assert the exact unique sequence, persisted total, single row, deterministic expiry reset and resetKey. Raw client keys are hashed before persistence. |
 | NOT VERIFIED | Shared behavior across actual Render instances and deployed client-IP/proxy attribution. CI validates separate store objects against the same isolated PostgreSQL service, not the real Render topology. |
 | PASS | Security headers/CSP are configured with Helmet in `server.js`; `tests/smoke.test.js` checks CSP script restrictions and that project files outside `public/` are not served as static assets. |
 | NOT VERIFIED | Render's actual proxy chain, TLS termination, domain/custom-domain settings, runtime Node version, build/start commands, environment-variable presence and whether the live service runs this branch. Verify in Render Dashboard before any deployment. Do not infer these values from `.env.example`. |
@@ -87,7 +86,7 @@ The test DB guard in `tests/session.integration.test.js` rejects non-loopback ho
 ### Medium — resolve or explicitly accept before launch
 
 1. **NOT VERIFIED — Admin authentication policy.** The code uses one configured admin password and has no demonstrated MFA/recovery process. Owner must validate credential rotation, recovery and access policy; add individual admin identities/MFA if required by the threat model.
-2. **PASS — Shared rate limiting.** All three limiters use atomic PostgreSQL UPSERT counters, hashed client keys and separate limiter namespaces. No Redis or new service is required. Store failures return HTTP 503 rather than falling back to process-local counters. Migration 002 (or the reviewed opt-in initializer) is required before relying on the limiter. CI validates independent store instances against one test database; actual Render topology and DB grants remain unverified.
+2. **PASS (pending current CI) — Shared rate limiting.** All three limiters use atomic PostgreSQL UPSERT counters, hashed client keys and separate limiter namespaces. No Redis or new service is required. Main UPSERT failures/timeouts return HTTP 503 rather than falling back to process-local counters. Optional expired-row cleanup runs at most once per 100 increments per store instance; its errors are logged separately with a bounded error classification and cannot turn a successful UPSERT into a failed increment. The store uses a dedicated pool with bounded connection, lock, statement and query timeouts. New integration tests exercise cleanup failure, explicit UPSERT failure, a PostgreSQL lock timeout and 100 parallel increments across two independent stores. Current CI must confirm these tests; actual Render topology and DB grants remain unverified.
 3. **PASS — Structured administrative audit coverage.** Login success/failure and rate-limit denials, Origin/CSRF/auth denials, prerequisite denials where the database is usable, admin session/order/receipt reads, safe-mode order/payment/fulfillment denials, logout outcomes and admin request errors attempt structured audit writes. Rows include `TIMESTAMPTZ`, event action, operation type, result, server-generated request UUID, fixed reason code, safe target metadata and a SHA-256 session identifier hash. Passwords, raw cookies/session IDs, CSRF tokens, receipt bytes and arbitrary error text are not audit fields. If the audit store is unavailable, successful login/reads are not returned as successful; blocked business operations remain blocked. **The table is not append-only or tamper-proof**: DB permissions/retention controls are unverified. Audit events cannot be persisted when PostgreSQL itself is unavailable. Future critical mutations must insert the audit row and update business data in the same database transaction; current mutation routes remain disabled.
 4. **NOT VERIFIED — Canonical origin policy.** Origin validation compares against the incoming Host rather than a separately configured canonical origin. Validate actual public-host/proxy behavior and consider an explicit allowlist.
 
@@ -104,17 +103,20 @@ No changes to `main`, no merge, no deployment, no production environment changes
 
 ## 7. Tests and actual results
 
-**CI run #236:** [workflow](https://github.com/Beak67/zavaebatel-uc/actions/runs/38699952627) completed successfully for application/test revision `003522133b0f8b8b23411e626f1cb10e0992275f`.
+The earlier [CI run #236](https://github.com/Beak67/zavaebatel-uc/actions/runs/38699952627) is historical and does **not** prove the new timeout/concurrency tests pass. Current-head status must be read from the workflow run associated with the latest PR head.
 
-| Command | Actual result |
+| Command / test | Current result |
 |---|---|
-| `npm ci` | PASS — GitHub Actions step succeeded |
-| `node --check server.js && node --check public/admin.js && node --check public/storefront.js` | PASS — GitHub Actions step succeeded |
-| `npm test` | PASS — test step succeeded, including isolated PostgreSQL 16 integration tests |
-| `npm audit --omit=dev` | PASS — audit step succeeded |
+| npm ci | PENDING until the latest-head workflow result is confirmed |
+| JavaScript syntax checks | PENDING until the latest-head workflow result is confirmed |
+| npm test including isolated PostgreSQL 16 migration, concurrency, cleanup-failure, UPSERT-failure and lock-timeout tests | PENDING until the latest-head workflow result is confirmed |
+| npm audit --omit=dev | PENDING until the latest-head workflow result is confirmed |
 
-These commands ran in GitHub Actions, not locally. The audit covers production dependencies known to npm at that run; it does not prove the application is vulnerability-free or audit all development dependencies. The current test revision is validated; production and Render remain unverified.
+Tests use only TEST_DATABASE_URL, which is rejected before connection unless it uses a loopback host and database name ending in _test. The timeout test uses the isolated test database and holds a row lock to force a bounded failure; no production URL is used. These results must not be described as PASS unless the latest workflow actually reports success.
 
+### Cloudflare Workers Build — NOT VERIFIED
+
+The external check [run 116307030748](https://github.com/Beak67/zavaebatel-uc/runs/116307030748) reports a failed Cloudflare build. The Cloudflare bot comment links to build logs in the Cloudflare dashboard, but the logs are not available through the accessible GitHub Actions job-log endpoint (the endpoint returns 404 because this is not a normal Actions job). The branch has no wrangler.toml or wrangler.jsonc; package.json defines a Node/Express start command and no build script. These facts raise a possible deployment-target/configuration mismatch but do not establish the exact build error. No workflow or branch-protection change was made to hide the failure. Obtain the actual Cloudflare dashboard build log and confirm whether this external check is required before changing configuration or treating it as resolved.
 ## 8. External checks required before merge/deployment
 
 - [ ] Render owner confirms the service settings, actual proxy topology, TLS/domain configuration and current deployed revision.
