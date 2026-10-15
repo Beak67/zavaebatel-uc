@@ -3,7 +3,7 @@
 **Scope:** repository review and safe CI tests on `security/audit-safe-storefront`. No production deployment, production configuration change, production database connection, real order/payment/receipt upload, or UC fulfillment was performed.
 
 **Tested application/test revision:** `dcdec4de4959a2834a0aa7e1aa07aa64bb873371`  
-**CI evidence:** [Run #169](https://github.com/Beak67/zavaebatel-uc/actions/runs/38697515235) — successful. It ran `npm ci`, syntax checks, `npm test` (20 passed, 0 failed, 0 skipped), and `npm audit --omit=dev` (0 production dependency vulnerabilities reported). Later commits, if any, that only update this report/README do not change the tested application or test code.
+**CI evidence:** [Run #179](https://github.com/Beak67/zavaebatel-uc/actions/runs/38697844156) passed on the latest documentation-updated branch head; it ran `npm ci`, syntax checks, `npm test` (20 passed, 0 failed, 0 skipped), and `npm audit --omit=dev` (0 production dependency vulnerabilities reported). The tested application/test revision is `dcdec4de4959a2834a0aa7e1aa07aa64bb873371`; commits after it only changed documentation.
 
 ## Decision
 
@@ -77,20 +77,19 @@ The test DB guard in `tests/session.integration.test.js` rejects non-loopback ho
 
 ### High — blocks production approval
 
-1. **Render topology and HTTPS are unverified.** Confirm the real proxy hop count, TLS termination, forwarded protocol behavior, service settings and live code revision in Render. Evidence currently available: repository code and CI only.
-2. **Production DB access model and recovery are unverified.** Confirm least-privilege grants, schema compatibility, backup freshness, restore process and a successful isolated restore before deployment.
-3. **Nexus contract, permissions and prices are unverified.** Obtain owner-approved sandbox/test credentials and documented API/price semantics. Do not use production credentials for this audit.
-4. **Real fulfillment must remain disabled.** There is no demonstrated idempotency/reconciliation path for future fulfillment; do not enable business operations until a separately reviewed design and sandbox tests exist.
+1. **NOT VERIFIED — Render topology and HTTPS.** Confirm the real proxy hop count, TLS termination, forwarded protocol behavior, service settings and live code revision in Render. Evidence currently available: repository code and CI only.
+2. **NOT VERIFIED — Production DB access model and recovery.** Confirm least-privilege grants, schema compatibility, backup freshness, restore process and a successful isolated restore before deployment.
+3. **NOT VERIFIED — Nexus contract, permissions and prices.** Obtain owner-approved sandbox/test credentials and documented API/price semantics. Do not use production credentials for this audit.
+4. **PASS — Current fulfillment stays disabled; NOT VERIFIED — future fulfillment safety.** There is no demonstrated idempotency/reconciliation path for a future enabled implementation; do not enable business operations until a separately reviewed design and sandbox tests exist.
 
 ### Medium — resolve or explicitly accept before launch
 
-1. **Shared admin credential / no demonstrated MFA.** Validate credential rotation, recovery and access policy; add individual admin identities/MFA if required by the threat model.
-2. **Rate limits are per process with the default store.** Confirm the deployment has a single instance or use a shared store if cross-instance enforcement is required.
-3. **Admin audit trail is incomplete.** The `admin_audit` table is provisioned, but rejected safe-mode operations are not written to an append-only audit trail. Do not treat this table as an operational audit system.
-4. **Origin policy depends on incoming Host.** Validate against the actual public hostname and proxy behavior; consider an explicit canonical-origin allowlist.
+1. **NOT VERIFIED — Admin authentication policy.** The code uses one configured admin password and has no demonstrated MFA/recovery process. Owner must validate credential rotation, recovery and access policy; add individual admin identities/MFA if required by the threat model.
+2. **FAIL — Rate limiting is process-local.** The configured default store does not provide a shared global counter across multiple instances. If Render runs more than one instance, use a shared store or explicitly accept this limitation after confirming topology.
+3. **FAIL — Admin audit trail is incomplete.** The `admin_audit` table is provisioned, but rejected safe-mode operations are not written to an append-only audit trail. Do not treat this table as an operational audit system.
+4. **NOT VERIFIED — Canonical origin policy.** Origin validation compares against the incoming Host rather than a separately configured canonical origin. Validate actual public-host/proxy behavior and consider an explicit allowlist.
 
 No critical defect was found that enables real transactions in the current code paths; that is not equivalent to a clean bill of health for production.
-
 ## 6. Changed files in this audit
 
 - `server.js` — schema readiness validates required columns and fails closed for incompatible schemas.
