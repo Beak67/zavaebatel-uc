@@ -165,7 +165,11 @@ app.get('/admin', (_req,res,next)=> {
 });
 // Only the dedicated public directory is exposed; project files and secrets remain outside the static root.
 app.use(express.static(publicDir, { index:false, dotfiles:'deny', fallthrough:true, maxAge:0 }));
-app.get('/api/health', (_req,res)=>res.status(dbError?503:200).json({ok:!dbError,shop:'ZAVAEBATEL UC',database:!pool?'not_configured':dbError?'error':'configured',ordersEnabled:false}));
+app.get('/api/health', (_req,res)=>{
+  const database = !pool ? 'not_configured' : dbError ? 'error' : 'configured';
+  const ok = Boolean(pool) && !dbError;
+  res.status(ok ? 200 : 503).json({ ok, shop:'ZAVAEBATEL UC', database, ordersEnabled:false });
+});
 app.get('/api/catalog', async (_req,res)=>{
   try { const products=await getCatalog(); res.set('Cache-Control','no-store').json({mode:'live',currency:'RUB',count:products.length,products:products.map(p=>({id:p.id,name:p.name,icon:p.icon,price:retailPrice(p.priceUsd)}))}); }
   catch(e) { res.status(e.kind==='configuration'?503:502).json({error:e.message,code:e.kind||'catalog_unavailable'}); }
