@@ -1,8 +1,8 @@
 # Security audit report — ZAVAEBATEL UC
 
 **Reviewed branch:** `security/audit-safe-storefront`  
-**Reviewed commit:** `25ba68a8e301f152487504ef5b1870d7ca36cd16`  
-**CI:** [GitHub Actions run #98](https://github.com/Beak67/zavaebatel-uc/actions/runs/38693525905), completed successfully on the reviewed commit.  
+**Current branch head at report update:** `e640a8ef51ab994c460089c5a2ed8002637b9b45`  
+**Last confirmed successful CI:** [GitHub Actions run #98](https://github.com/Beak67/zavaebatel-uc/actions/runs/38693525905), on earlier commit `25ba68a8e301f152487504ef5b1870d7ca36cd16`. The current head adds async route error forwarding and a regression test; a separate successful CI result for that newer code has not yet been confirmed.  
 **Scope limitation:** this is a repository/code review plus CI evidence, not a production penetration test or a certification of production readiness.
 
 ## Executive summary
