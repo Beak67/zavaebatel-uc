@@ -308,15 +308,15 @@ async function requireDb(req,res,next) {
     return deny('admin_credential_configuration_invalid','Администрирование отключено: задайте ADMIN_PASSWORD длиной не менее 20 символов.');
   next();
 }
-async function writeAudit(req, { action, operationType = action, result, reasonCode = null, targetType = null, targetId = null }) {
+async function writeAudit(req, { action, operationType = action, result, reasonCode = null, targetType = null, targetId = null, adminIdentity = null, sessionHash: suppliedSessionHash = undefined }) {
   if (!pool) throw Object.assign(new Error('Audit storage unavailable'), { code: 'AUDIT_STORE_UNAVAILABLE' });
   const validTargetId = typeof targetId === 'string' && validId(targetId) ? targetId : null;
-  const sessionHash = req.sessionID ? hash(req.sessionID) : null;
+  const sessionHash = suppliedSessionHash === undefined ? (req.sessionID ? hash(req.sessionID) : null) : suppliedSessionHash;
   await pool.query(`
     INSERT INTO admin_audit
       (order_public_id, action, operation_type, result, admin_identity, request_id, reason_code, target_type, target_id, session_hash)
     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-  `, [validTargetId, action, operationType, result, req.session?.isAdmin === true ? 'admin' : 'anonymous',
+  `, [validTargetId, action, operationType, result, adminIdentity || (req.session?.isAdmin === true ? 'admin' : 'anonymous'),
     req.requestId || crypto.randomUUID(), reasonCode, targetType, validTargetId, sessionHash]);
 }
 async function auditDenied(req, res, { action, reasonCode, status, error }) {
@@ -421,10 +421,19 @@ app.get('/api/admin/orders/:publicId/receipt',requireDb,requireAdmin,asyncHandle
   res.set({'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Content-Disposition':'attachment; filename="receipt"'}).type(r.rows[0].receipt_mime).send(r.rows[0].receipt_data);
 }));
 app.post('/api/admin/logout',requireDb,requireAdmin,requireCsrf,asyncHandler(async(req,res)=> {
-  try { await writeAudit(req,{action:'admin_logout',result:'success'}); }
-  catch { return res.status(503).json({error:'Журнал аудита недоступен; выход не подтверждён.'}); }
-  await new Promise((resolve,reject)=>req.session.destroy(error=>error?reject(error):resolve()));
+  const sessionHash = req.sessionID ? hash(req.sessionID) : null;
+  try {
+    await new Promise((resolve,reject)=>req.session.destroy(error=>error?reject(error):resolve()));
+  } catch {
+    await writeAudit(req,{action:'admin_logout',result:'error',reasonCode:'session_destroy_failed',adminIdentity:'admin',sessionHash}).catch(()=>{});
+    return res.status(500).json({error:'Не удалось завершить сессию.'});
+  }
   res.clearCookie('zuc.sid',{httpOnly:true,secure:process.env.NODE_ENV==='production',sameSite:'strict',path:'/'});
+  try {
+    await writeAudit(req,{action:'admin_logout',result:'success',adminIdentity:'admin',sessionHash});
+  } catch {
+    return res.status(503).json({error:'Сессия завершена, но журнал аудита недоступен.'});
+  }
   return res.json({ok:true});
 }));
 app.post('/api/admin/orders/:publicId/:action',requireDb,requireAdmin,requireCsrf,asyncHandler(async(req,res)=>{
