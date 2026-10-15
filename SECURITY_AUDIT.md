@@ -1,12 +1,12 @@
 # Security audit report — ZAVAEBATEL UC
 
 **Reviewed branch:** `security/audit-safe-storefront`  
-**Latest successful CI for application/test code:** [Run #136](https://github.com/Beak67/zavaebatel-uc/actions/runs/38695485546) passed on branch HEAD `8bffea952032da7b254ba2a3e940a5d32352bfe5`. `npm ci`, syntax checks, `npm test` (17/17), and `npm audit --omit=dev` succeeded; npm reported 0 vulnerabilities in production dependencies. The regression test runs a real Express test server, asserts the HTTP response from the Express error middleware, and both smoke and authenticated-admin integration tests set `SBP_ENABLED=true`. Subsequent README/audit-report commits are documentation-only; application code, tests and lockfile have not changed.  
+**Latest successful CI for application/test code:** [Run #143](https://github.com/Beak67/zavaebatel-uc/actions/runs/38695684273) passed on branch HEAD `af766a9e50941a4015960d449e3a873a98fa15a8`. `npm ci`, syntax checks, `npm test` (17/17), and `npm audit --omit=dev` succeeded; npm reported 0 vulnerabilities in production dependencies. The regression test runs a real Express test server, asserts the HTTP response from the Express error middleware, and both smoke and authenticated-admin integration tests set `SBP_ENABLED=true`. Subsequent README/audit-report commits are documentation-only; application code, tests and lockfile have not changed.  
 **Scope limitation:** this is a repository/code review plus CI evidence, not a production penetration test or a certification of production readiness.
 
 ## Executive summary
 
-The current branch intentionally runs in a safe, non-transactional mode. Order creation, receipt upload, payment instructions, order-state changes, payment confirmation and UC fulfillment are disabled in code and return HTTP 503 (payment info explicitly says disabled), independent of `SBP_ENABLED=true`. Run #136 passed the application and test code checks described above. No production deployment, production database access/mutation, real payment, receipt upload, Nexus order or UC fulfillment was performed.
+The current branch intentionally runs in a safe, non-transactional mode. Order creation, receipt upload, payment instructions, order-state changes, payment confirmation and UC fulfillment are disabled in code and return HTTP 503 (payment info explicitly says disabled), independent of `SBP_ENABLED=true`. Run #143 passed the application and test code checks described above. No production deployment, production database access/mutation, real payment, receipt upload, Nexus order or UC fulfillment was performed.
 
 **Recommendation:** eligible for human final review of the branch; **not production-ready**. Keep business operations disabled.
 
@@ -51,16 +51,16 @@ The current branch intentionally runs in a safe, non-transactional mode. Order c
 - **Not verified:** actual Nexus API contract, token permissions, upstream response behavior or production price correctness. CI uses stubs and does not contact Nexus.
 
 ### Dependencies, configuration and secrets
-- `package-lock.json` is present with lockfile version 3. Run #136 successfully executed `npm ci` against this lockfile.
-- Run #136 successfully ran `npm audit --omit=dev` and reported 0 vulnerabilities in production dependencies. This checks production dependencies known to npm at run time; it does not prove that the entire application has no vulnerabilities, and it does not audit development dependencies.
+- `package-lock.json` is present with lockfile version 3. Run #143 successfully executed `npm ci` against this lockfile.
+- Run #143 successfully ran `npm audit --omit=dev` and reported 0 vulnerabilities in production dependencies. This checks production dependencies known to npm at run time; it does not prove that the entire application has no vulnerabilities, and it does not audit development dependencies.
 - `.env.example` contains empty placeholders, not live credentials. No production environment variables were accessed.
 - **Not verified:** independent secret scanning of all Git history, private Render configuration, token rotation status or dependencies against advisories published after the CI run.
 
 ## Verification evidence
 
-Run #136: [https://github.com/Beak67/zavaebatel-uc/actions/runs/38695485546](https://github.com/Beak67/zavaebatel-uc/actions/runs/38695485546)
+Run #143: [https://github.com/Beak67/zavaebatel-uc/actions/runs/38695684273](https://github.com/Beak67/zavaebatel-uc/actions/runs/38695684273)
 
-All relevant workflow steps completed successfully on branch HEAD `8bffea952032da7b254ba2a3e940a5d32352bfe5`:
+All relevant workflow steps completed successfully on branch HEAD `af766a9e50941a4015960d449e3a873a98fa15a8`:
 1. `npm ci` — success; lockfile v3 accepted
 2. `node --check server.js && node --check public/admin.js && node --check public/storefront.js` — success
 3. `npm test` — success, 17 tests passed and 0 failed; PostgreSQL-backed integration tests use an ephemeral PostgreSQL 16 service
