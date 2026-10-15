@@ -194,7 +194,7 @@ function requireSameOrigin(req,res,next) {
     return res.status(403).json({ error:'Origin не разрешён.' });
   next();
 }
-const asyncHandler = fn => (req,res,next) => Promise.resolve(fn(req,res,next)).catch(next);
+export const asyncHandler = fn => (req,res,next) => Promise.resolve(fn(req,res,next)).catch(next);
 function requireCsrf(req,res,next) {
   if (!req.session?.csrfToken || !safeEqual(req.get('x-csrf-token')||'',req.session.csrfToken)) return res.status(403).json({error:'CSRF-проверка не пройдена.'});
   next();
