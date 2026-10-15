@@ -155,9 +155,9 @@ const loginLimit = rateLimit({ windowMs: 15 * 60 * 1000, limit: 8, standardHeade
   }
 });
 const orderLimit = rateLimit({ windowMs: 60 * 60 * 1000, limit: 10, standardHeaders: true, legacyHeaders: false,
-  store: new PostgresRateLimitStore({ pool, limiterName: 'order-create' }) });
+  store: new PostgresRateLimitStore({ pool: rateLimitPool, limiterName: 'order-create' }) });
 const receiptLimit = rateLimit({ windowMs: 60 * 60 * 1000, limit: 5, standardHeaders: true, legacyHeaders: false,
-  store: new PostgresRateLimitStore({ pool, limiterName: 'receipt-upload' }) });
+  store: new PostgresRateLimitStore({ pool: rateLimitPool, limiterName: 'receipt-upload' }) });
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024, files: 1, fields: 1, parts: 2 },
   fileFilter: (_req, f, cb) => {
     const ext = path.extname(f.originalname || '').toLowerCase();
