@@ -72,12 +72,12 @@
 
 Workflow `.github/workflows/test.yml` запускает `npm ci`, `npm test` и `npm audit --omit=dev` в Node.js 20. Интеграционные тесты сессий используют только эфемерный PostgreSQL с тестовыми credentials в CI; они не обращаются к Render, Nexus или реальным платежам.
 
-Фактический успешный run для commit `e4c7bdd5f2c7d431952a65c1a62637f8080ceb0e`: [GitHub Actions run #81](https://github.com/Beak67/zavaebatel-uc/actions/runs/38692065606).
+Фактический успешный run для commit `7c6960773b8687b10d6c5c0fdd2f42b2280eff9f`: [GitHub Actions run #90](https://github.com/Beak67/zavaebatel-uc/actions/runs/38692361446).
 - `npm ci`: успешно; 99 packages added, 100 audited.
 - `npm test`: **16 passed, 0 failed, 0 skipped**. Включены реальные HTTP-тесты login/session/CSRF/logout на эфемерной PostgreSQL и fail-closed тест при недоступном хранилище.
 - `npm audit --omit=dev`: успешно; **0 vulnerabilities**.
 
-После последующих изменений README новый CI run должен также пройти. Не запускайте тесты против production DATABASE_URL.
+Эти результаты относятся к проверенному коду и тестам; последний последующий commit, меняющий только этот README, также проходит стандартный CI отдельно. Не запускайте тесты против production DATABASE_URL.
 
 ## Что осталось непроверенным
 
