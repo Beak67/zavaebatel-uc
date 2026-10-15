@@ -99,15 +99,27 @@ async function initDb() {
   `);
 }
 async function verifyDbSchema() {
-  const result = await pool.query(`
-    SELECT
-      to_regclass('public.user_sessions') AS user_sessions,
-      to_regclass('public.manual_orders') AS manual_orders,
-      to_regclass('public.admin_audit') AS admin_audit
-  `);
-  const row = result.rows[0] || {};
-  const missing = ['user_sessions', 'manual_orders', 'admin_audit'].filter(name => !row[name]);
-  if (missing.length) throw Object.assign(new Error('Required database schema is missing'), { code: 'DB_SCHEMA_MISSING' });
+  // Verify required columns as well as table names; a table-only check can report ready
+  // for a stale/incompatible schema and defer the failure to an application request.
+  const required = {
+    user_sessions: ['sid', 'sess', 'expire'],
+    manual_orders: ['public_id', 'access_secret_hash', 'product_id', 'product_name', 'player_id',
+      'amount_rub', 'status', 'receipt_data', 'receipt_mime', 'receipt_uploaded_at', 'admin_note',
+      'reviewed_at', 'reviewed_by', 'created_at'],
+    admin_audit: ['order_public_id', 'action', 'result', 'admin_identity', 'created_at']
+  };
+  const result = await pool.query(
+    'SELECT table_name, column_name FROM information_schema.columns WHERE table_schema = $1 AND table_name = ANY($2::text[])',
+    ['public', Object.keys(required)]
+  );
+  const present = new Map();
+  for (const row of result.rows) {
+    if (!present.has(row.table_name)) present.set(row.table_name, new Set());
+    present.get(row.table_name).add(row.column_name);
+  }
+  const missing = Object.entries(required).flatMap(([table, columns]) =>
+    columns.filter(column => !present.get(table)?.has(column)).map(column => table + '.' + column));
+  if (missing.length) throw Object.assign(new Error('Required database schema is missing or incompatible'), { code: 'DB_SCHEMA_MISSING' });
 }
 const dbReady = !pool
   ? Promise.resolve()
