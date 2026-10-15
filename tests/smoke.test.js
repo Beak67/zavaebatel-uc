@@ -10,7 +10,7 @@ process.env.SBP_ENABLED = 'true';
 process.env.NEXUS_PRICE_CURRENCY = 'USD';
 process.env.NEXUS_USD_RUB = '85';
 process.env.SALE_MARKUP = '0.20';
-const { default: app, normalizeProducts, retailPrice, getCatalog, asyncHandler, missingRequiredSchemaColumns, PostgresRateLimitStore } = await import('../server.js');
+const { default: app, normalizeProducts, retailPrice, getCatalog, asyncHandler, missingRequiredSchemaColumns, hasSharedRateLimitUniqueKey, PostgresRateLimitStore } = await import('../server.js');
 process.env.NEXUS_SHOP_ID = 'test-shop';
 process.env.NEXUS_SHOP_TOKEN = 'test-token';
 
@@ -120,6 +120,9 @@ test('schema readiness rejects missing required PostgreSQL columns', () => {
   assert.deepEqual(missingRequiredSchemaColumns(rows.filter(row => !(row.table_name === 'manual_orders' && row.column_name === 'status'))), ['manual_orders.status']);
   assert.ok(missingRequiredSchemaColumns([]).includes('user_sessions.sid'));
   assert.ok(missingRequiredSchemaColumns(rows.filter(row => row.table_name !== 'rate_limit_counters')).includes('rate_limit_counters.limiter_name'));
+  assert.equal(hasSharedRateLimitUniqueKey({ has_shared_rate_limit_key: true }), true);
+  assert.equal(hasSharedRateLimitUniqueKey({ has_shared_rate_limit_key: false }), false);
+  assert.equal(hasSharedRateLimitUniqueKey(undefined), false);
 });
 
 test('database migrations are additive and never rewrite order statuses', async () => {
