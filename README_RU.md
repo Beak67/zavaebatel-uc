@@ -31,11 +31,11 @@
 
 ## Проверки CI
 
-[Run #169](https://github.com/Beak67/zavaebatel-uc/actions/runs/38697515235) успешно проверил код/тесты revision \`dcdec4de4959a2834a0aa7e1aa07aa64bb873371\`: \`npm ci\` — PASS; \`node --check server.js && node --check public/admin.js && node --check public/storefront.js\` — PASS; \`npm test\` — 20 passed, 0 failed, 0 skipped; \`npm audit --omit=dev\` — 0 vulnerabilities в production dependencies. Тесты проверяют блокировку бизнес-функций с \`SBP_ENABLED=true\`, выполняют миграцию дважды на изолированной CI PostgreSQL и проверяют fail-closed поведение при несовместимой схеме.
+Текущие изменения rate limiting и audit trail должны проверяться на актуальном head PR #1 в [GitHub Actions](https://github.com/Beak67/zavaebatel-uc/actions). Ранее успешный run относится к старой ревизии и не доказывает корректность нового кода. Не объявляйте `npm ci`, syntax checks, `npm test` или `npm audit --omit=dev` успешными до завершения актуального CI.
 
-Интеграционный тест отказывается запускаться, если \`TEST_DATABASE_URL\` не указывает на loopback/localhost и имя базы с суффиксом \`_test\`. CI использует эфемерную PostgreSQL 16. Это защита от случайной ошибки конфигурации, а не защита от вручную настроенного локального туннеля к production. Последующие изменения README/аудиторского отчёта — только документация; приложение и тесты не менялись после протестированного revision. CI не доказывает безопасность production или отсутствие всех возможных уязвимостей.
+Интеграционные тесты отказываются запускаться, если `TEST_DATABASE_URL` не указывает на loopback/localhost и имя базы с суффиксом `_test`. CI использует эфемерную PostgreSQL 16. Guard защищает от случайной ошибки конфигурации, но не от вручную настроенного локального туннеля к production. Тесты проверяют несколько независимых rate-limit store экземпляров на одной тестовой БД, истечение/reset счётчика, ошибки хранилища, структуру audit rows, идемпотентность миграций и блокировки safe mode при `SBP_ENABLED=true`. Это не production test и не подтверждение Render topology или DB grants.
 
-Подробности, покрытие и ограничения описаны в [SECURITY_AUDIT.md](SECURITY_AUDIT.md).
+Подробности и актуальные статусы PASS / FAIL / NOT VERIFIED описаны в [SECURITY_AUDIT.md](SECURITY_AUDIT.md).
 
 ## Что не проверено / блокеры перед production
 
