@@ -10,7 +10,7 @@ process.env.SBP_ENABLED = 'true';
 process.env.NEXUS_PRICE_CURRENCY = 'USD';
 process.env.NEXUS_USD_RUB = '85';
 process.env.SALE_MARKUP = '0.20';
-const { default: app, normalizeProducts, retailPrice, getCatalog, asyncHandler, missingRequiredSchemaColumns } = await import('../server.js');
+const { default: app, normalizeProducts, retailPrice, getCatalog, asyncHandler, missingRequiredSchemaColumns, PostgresRateLimitStore } = await import('../server.js');
 process.env.NEXUS_SHOP_ID = 'test-shop';
 process.env.NEXUS_SHOP_TOKEN = 'test-token';
 
@@ -112,20 +112,37 @@ test('schema readiness rejects missing required PostgreSQL columns', () => {
     manual_orders: ['public_id', 'access_secret_hash', 'product_id', 'product_name', 'player_id',
       'amount_rub', 'status', 'receipt_data', 'receipt_mime', 'receipt_uploaded_at', 'admin_note',
       'reviewed_at', 'reviewed_by', 'created_at'],
-    admin_audit: ['order_public_id', 'action', 'result', 'admin_identity', 'created_at']
+    admin_audit: ['order_public_id', 'action', 'result', 'admin_identity', 'created_at', 'request_id', 'reason_code', 'target_type', 'target_id', 'session_hash'],
+    rate_limit_counters: ['limiter_name', 'key_hash', 'hits', 'reset_at']
   };
   const rows = Object.entries(columns).flatMap(([table_name, names]) => names.map(column_name => ({ table_name, column_name })));
   assert.deepEqual(missingRequiredSchemaColumns(rows), []);
   assert.deepEqual(missingRequiredSchemaColumns(rows.filter(row => !(row.table_name === 'manual_orders' && row.column_name === 'status'))), ['manual_orders.status']);
   assert.ok(missingRequiredSchemaColumns([]).includes('user_sessions.sid'));
+  assert.ok(missingRequiredSchemaColumns(rows.filter(row => row.table_name !== 'rate_limit_counters')).includes('rate_limit_counters.limiter_name'));
 });
 
-test('database migration is additive and never rewrites order statuses', async () => {
+test('database migrations are additive and never rewrite order statuses', async () => {
   const migration = await readFile(new URL('../migrations/001_session_store_and_safe_admin.sql', import.meta.url), 'utf8');
+  const auditMigration = await readFile(new URL('../migrations/002_shared_rate_limits_and_audit.sql', import.meta.url), 'utf8');
   assert.match(migration, /CREATE TABLE IF NOT EXISTS user_sessions/);
   assert.match(migration, /CREATE TABLE IF NOT EXISTS admin_audit/);
   assert.match(migration, /ADD COLUMN IF NOT EXISTS reviewed_by/);
-  assert.doesNotMatch(migration, /DROP TABLE|TRUNCATE|DELETE FROM|UPDATE manual_orders|ALTER COLUMN status/i);
+  assert.match(auditMigration, /CREATE TABLE IF NOT EXISTS rate_limit_counters/);
+  assert.match(auditMigration, /ADD COLUMN IF NOT EXISTS request_id/);
+  assert.match(auditMigration, /ALTER COLUMN order_public_id DROP NOT NULL/);
+  assert.doesNotMatch(migration + auditMigration, /DROP TABLE|TRUNCATE|DELETE FROM|UPDATE manual_orders|ALTER COLUMN status/i);
+});
+
+test('rate limiting requires the shared PostgreSQL store and fails closed without leaking storage errors', async () => {
+  const source = await readFile(new URL('../server.js', import.meta.url), 'utf8');
+  assert.match(source, /store:\s*new PostgresRateLimitStore\(\{ pool, limiterName: 'admin-login' \}\)/);
+  assert.match(source, /store:\s*new PostgresRateLimitStore\(\{ pool, limiterName: 'order-create' \}\)/);
+  assert.match(source, /store:\s*new PostgresRateLimitStore\(\{ pool, limiterName: 'receipt-upload' \}\)/);
+  const absent = new PostgresRateLimitStore({ pool: null, limiterName: 'unit-test' });
+  await assert.rejects(absent.increment('synthetic-client'), error => error.code === 'RATE_LIMIT_STORE_UNAVAILABLE');
+  const broken = new PostgresRateLimitStore({ pool: { query: async () => { throw new Error('do-not-expose-this'); } }, limiterName: 'unit-test' });
+  await assert.rejects(broken.increment('synthetic-client'), error => error.code === 'RATE_LIMIT_STORE_UNAVAILABLE' && !error.message.includes('do-not-expose-this'));
 });
 
 test('public assets contain no configured test credentials', async () => {
