@@ -63,7 +63,12 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 *
   fileFilter: (_req, f, cb) => {
     const ext = path.extname(f.originalname || '').toLowerCase();
     const allowed = { '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.pdf': 'application/pdf' };
-    cb(allowed[ext] === f.mimetype ? null : new Error('Разрешены JPG, PNG или PDF с корректным MIME-типом.'), allowed[ext] === f.mimetype);
+    if (allowed[ext] !== f.mimetype) {
+      const error = new Error('Разрешены JPG, PNG или PDF с корректным MIME-типом.');
+      error.status = 400;
+      return cb(error);
+    }
+    cb(null, true);
   } });
 
 async function initDb() {
@@ -257,9 +262,14 @@ app.use((req,res)=>req.path.startsWith('/api/')?res.status(404).json({error:'API
 app.use((err,_req,res,_next)=>{
   const type = err.type==='entity.too.large' ? 'body_too_large' : err.code || err.name || 'Error';
   console.error('request_failed',{type});
-  const storageUnavailable = typeof err.code === 'string' && (/^(08|53|57P01|3D000|42P01|ECONN|ETIMEDOUT|EHOSTUNREACH|ENOTFOUND)/.test(err.code));
-  const status = err.type==='entity.too.large' ? 413 : storageUnavailable ? 503 : 400;
-  const message = status===413 ? 'Тело запроса слишком большое.' : status===503 ? 'Хранилище сессий или база данных временно недоступны.' : 'Некорректный запрос.';
+  const storageUnavailable = typeof err.code === 'string' && /^(08|53|57P01|3D000|42P01|ECONN|ETIMEDOUT|EHOSTUNREACH|ENOTFOUND)/.test(err.code);
+  const tooLarge = err.type === 'entity.too.large';
+  const badRequest = err.type === 'entity.parse.failed' || err.status === 400 || (typeof err.code === 'string' && err.code.startsWith('LIMIT_'));
+  const status = tooLarge ? 413 : storageUnavailable ? 503 : badRequest ? 400 : 500;
+  const message = status===413 ? 'Тело запроса слишком большое.'
+    : status===503 ? 'Хранилище сессий или база данных временно недоступны.'
+    : status===400 ? 'Некорректный запрос.'
+    : 'Внутренняя ошибка сервера.';
   if(!res.headersSent) res.status(status).json({error:message});
 });
 if (process.env.NODE_ENV !== 'test') app.listen(Number(process.env.PORT||3000),'0.0.0.0',()=>console.log('ZAVAEBATEL UC listening',{port:Number(process.env.PORT||3000)}));
