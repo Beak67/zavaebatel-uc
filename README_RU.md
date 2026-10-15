@@ -33,7 +33,7 @@
 - **PORT**, **NODE_ENV**.
 - **NEXUS_API_BASE**, **NEXUS_SHOP_ID**, **NEXUS_SHOP_TOKEN**.
 - **NEXUS_PRICE_CURRENCY**, **NEXUS_USD_RUB**, **SALE_MARKUP**.
-- **DATABASE_URL**, **DB_AUTO_INIT**, **TRUST_PROXY_HOPS**.
+- **DATABASE_URL**, **PGSSL_CA** (необязательный CA-сертификат для PostgreSQL), **DB_AUTO_INIT**, **TRUST_PROXY_HOPS**.
 - **ADMIN_PASSWORD**, **SESSION_SECRET**.
 - **SBP_ENABLED** и **SBP_PAYEE_NAME**, **SBP_BANK_NAME**, **SBP_PHONE**, **SBP_PAYMENT_INSTRUCTIONS** остаются выключенными/пустыми; их наличие не активирует не реализованный безопасный платёжный процесс.
 
@@ -51,9 +51,9 @@
 
 ## Верификация: фактический статус
 
-- **GitHub Actions Test run #46** завершился успешно для commit **87f8727c6cf805cc30a35e79d2e47240c689ed03**: `npm ci` — успешно; `npm test` — 12 пройдено, 0 упало; `npm audit --omit=dev` — успешно, **0 уязвимостей production-зависимостей**. [Открыть успешный run #46](https://github.com/Beak67/zavaebatel-uc/actions/runs/38690179037).
+- **GitHub Actions Test run #52** завершился успешно для commit **895f71ca57829d5e422fa7a1fbd4584116a81e97**: `npm ci` — успешно; `npm test` — 12 пройдено, 0 упало; `npm audit --omit=dev` — успешно, **0 уязвимостей production-зависимостей**. [Открыть успешный run #52](https://github.com/Beak67/zavaebatel-uc/actions/runs/38690277429).
 - `package-lock.json` сгенерирован npm в Node.js 20 / npm 10 окружении GitHub Actions и закоммичен в эту ветку; он согласован с текущим `package.json`.
-- Стандартный workflow `test.yml` проверяет Node.js 20, npm-кэширование, `npm ci`, `npm test` и `npm audit --omit=dev`. Ранее выявленные уязвимости закрыты обновлением Express, Multer и express-session; CSP-тест исправлен так, чтобы проверять именно директиву `script-src`, не запрещая inline-стили.
+- Стандартный workflow `test.yml` проверяет Node.js 20, npm-кэширование, `npm ci`, `npm test` и `npm audit --omit=dev`. Ранее выявленные уязвимости закрыты обновлением Express, Multer и express-session; CSP-тест проверяет именно директиву `script-src`, не запрещая inline-стили.
 
 ## База данных и миграции
 
