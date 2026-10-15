@@ -389,9 +389,14 @@ app.post('/api/admin/login', loginLimit, requireSameOrigin, requireDb, asyncHand
     catch { return res.status(503).json({error:'Журнал аудита недоступен; вход запрещён.'}); }
     return res.status(401).json({error:'Неверный пароль.'});
   }
-  await new Promise((resolve, reject) => req.session.regenerate(error => error ? reject(error) : resolve()));
+  try {
+    await new Promise((resolve, reject) => req.session.regenerate(error => error ? reject(error) : resolve()));
+  } catch {
+    await writeAudit(req,{action:'admin_login',result:'error',reasonCode:'session_regeneration_failed'}).catch(()=>{});
+    return res.status(500).json({error:'Не удалось создать защищённую сессию.'});
+  }
   if (!req.session) {
-    await writeAudit(req, { action:'admin_login', result:'error', reasonCode:'session_regeneration_failed' });
+    await writeAudit(req, { action:'admin_login', result:'error', reasonCode:'session_regeneration_failed' }).catch(()=>{});
     return res.status(500).json({error:'Не удалось создать защищённую сессию.'});
   }
   req.session.isAdmin=true; req.session.csrfToken=crypto.randomBytes(32).toString('hex');
