@@ -116,7 +116,7 @@ test('PostgreSQL-backed admin sessions, login, CSRF, logout, and safe-mode admin
       method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': loginBody.csrfToken }, body: '{}'
     });
     assert.equal(logout.status, 200);
-    assert.match(logout.headers.get('set-cookie') || '', /Max-Age=0/i);
+    assert.match(logout.headers.get('set-cookie') || '', /Expires=.*1970/i);
     const afterLogout = await fetch(app.base + '/api/admin/session', { headers: { cookie } });
     assert.equal(afterLogout.status, 401);
 
