@@ -20,7 +20,7 @@ test('normalizes UC products and excludes unrelated product IDs', () => {
 test('rejects unrecognized supplier response', () => assert.throws(() => normalizeProducts({ unexpected: true }), /списка товаров/));
 test('rejects zero, negative, and non-numeric supplier prices', () => {
   for (const price of [0, -1, 'not-a-price', '', Infinity]) {
-    assert.throws(() => normalizeProducts([{ id: 'pubg-mobile:uc:60', price }]), /цена/);
+    assert.throws(() => normalizeProducts([{ id: 'pubg-mobile:uc:60', price }]), /price|цен/);
   }
 });
 test('retail price is USD price × 85 × 1.20, rounded to kopecks', () => {
@@ -75,11 +75,13 @@ test('public assets contain no configured test credentials', async () => {
 
 test('Render routes, public assets, missing files and disabled sales', async () => {
   const originalFetch = globalThis.fetch;
-  // Never call the real supplier from smoke tests, even if the environment contains Nexus settings.
-  globalThis.fetch = async () => new Response('denied', { status: 401 });
   const server = http.createServer(app);
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const url = 'http://127.0.0.1:' + server.address().port;
+  // Stub only outbound supplier calls; keep requests to the local test server real.
+  globalThis.fetch = async (input, init) => String(input).startsWith(url)
+    ? originalFetch(input, init)
+    : new Response('denied', { status: 401 });
   try {
     const home = await fetch(url + '/');
     assert.equal(home.status, 200);
@@ -97,7 +99,9 @@ test('Render routes, public assets, missing files and disabled sales', async () 
     assert.match(health.headers.get('content-type'), /application\/json/);
     const catalog = await fetch(url + '/api/catalog');
     assert.ok([502, 503].includes(catalog.status));
-    assert.equal(typeof (await catalog.json()).error, 'string');
+    const catalogBody = await catalog.json();
+    assert.equal(typeof catalogBody.error, 'string');
+    assert.doesNotMatch(JSON.stringify(catalogBody), /test-token|test-shop|Authorization/i);
     for (const p of ['/server.js', '/package.json', '/.env', '/README.md', '/admin.html']) assert.equal((await fetch(url + p)).status, 404, p);
     const orders = await fetch(url + '/api/orders', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ productId: 'pubg-mobile:uc:60', playerId: '12345' }) });
     assert.equal(orders.status, 503);
@@ -115,8 +119,7 @@ test('Render routes, public assets, missing files and disabled sales', async () 
     assert.doesNotMatch(await unknownApi.text(), /test-token|test-shop/);
     const unknownPage = await fetch(url + '/this-page-does-not-exist');
     assert.equal(unknownPage.status, 404);
-    const catalogText = await catalog.clone().text();
-    assert.doesNotMatch(catalogText, /test-token|test-shop|Authorization/i);
+
   } finally {
     globalThis.fetch = originalFetch;
     await new Promise(resolve => server.close(resolve));
