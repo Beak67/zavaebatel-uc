@@ -28,10 +28,21 @@ if (parsedDatabaseUrl) {
   for (const key of ['sslmode', 'ssl', 'sslcert', 'sslkey', 'sslrootcert']) parsedDatabaseUrl.searchParams.delete(key);
 }
 const dbConnectionString = parsedDatabaseUrl?.toString() || databaseUrl;
-const pool = databaseUrl ? new Pool({
+const poolOptions = databaseUrl ? {
   connectionString: dbConnectionString,
   ssl: localDb ? false : { rejectUnauthorized: true, ...(process.env.PGSSL_CA ? { ca: process.env.PGSSL_CA } : {}) },
   connectionTimeoutMillis: 5000
+} : null;
+// Keep rate-limit queries on a dedicated, tightly bounded pool so SQL/lock timeouts
+// cannot impose unexpectedly short limits on session, audit, or application queries.
+const pool = poolOptions ? new Pool(poolOptions) : null;
+const rateLimitPool = poolOptions ? new Pool({
+  ...poolOptions,
+  max: 5,
+  connectionTimeoutMillis: 1000,
+  query_timeout: 2500,
+  statement_timeout: 2000,
+  lock_timeout: 500
 }) : null;
 const PgStore = connectPgSimple(session);
 let dbError = null;
@@ -77,8 +88,9 @@ export class PostgresRateLimitStore {
       throw error;
     }
     const keyHash = crypto.createHash('sha256').update(String(key)).digest('hex');
+    let result;
     try {
-      const result = await this.pool.query(`
+      result = await this.pool.query(`
         INSERT INTO rate_limit_counters (limiter_name, key_hash, hits, reset_at)
         VALUES ($1, $2, 1, NOW() + ($3::bigint * INTERVAL '1 millisecond'))
         ON CONFLICT (limiter_name, key_hash) DO UPDATE SET
@@ -87,18 +99,35 @@ export class PostgresRateLimitStore {
             THEN NOW() + ($3::bigint * INTERVAL '1 millisecond') ELSE rate_limit_counters.reset_at END
         RETURNING hits, reset_at
       `, [this.limiterName, keyHash, this.windowMs]);
-      this.operations++;
-      // Opportunistic bounded cleanup; counters themselves remain PostgreSQL-backed and atomic.
-      if (this.operations % 100 === 0) {
-        await this.pool.query('DELETE FROM rate_limit_counters WHERE reset_at < NOW() - INTERVAL \'24 hours\'');
-      }
-      return { totalHits: Number(result.rows[0].hits), resetTime: new Date(result.rows[0].reset_at) };
     } catch {
+      // Do not leak driver messages or fall back to a process-local counter.
       const error = new Error('Shared rate-limit storage is unavailable');
       error.code = 'RATE_LIMIT_STORE_UNAVAILABLE';
       error.status = 503;
       throw error;
     }
+    const row = result?.rows?.[0];
+    if (!row) {
+      const error = new Error('Shared rate-limit storage returned no counter result');
+      error.code = 'RATE_LIMIT_STORE_UNAVAILABLE';
+      error.status = 503;
+      throw error;
+    }
+
+    this.operations++;
+    // Cleanup is ancillary: never turn a committed increment into a failed request.
+    // At most one cleanup attempt per 100 increments per store instance.
+    if (this.operations % 100 === 0) {
+      try {
+        await this.pool.query("DELETE FROM rate_limit_counters WHERE reset_at < NOW() - INTERVAL '24 hours'");
+      } catch (error) {
+        const errorType = typeof error?.code === 'string' && /^[A-Z0-9_]{1,32}$/.test(error.code)
+          ? error.code
+          : (error?.name === 'Error' ? 'Error' : 'UnknownError');
+        console.warn('rate_limit_cleanup_failed', { limiterName: this.limiterName, errorType });
+      }
+    }
+    return { totalHits: Number(row.hits), resetTime: new Date(row.reset_at) };
   }
   async decrement(key) {
     if (!this.pool) return;
@@ -118,7 +147,7 @@ export class PostgresRateLimitStore {
   }
 }
 const loginLimit = rateLimit({ windowMs: 15 * 60 * 1000, limit: 8, standardHeaders: true, legacyHeaders: false,
-  store: new PostgresRateLimitStore({ pool, limiterName: 'admin-login' }),
+  store: new PostgresRateLimitStore({ pool: rateLimitPool, limiterName: 'admin-login' }),
   handler: (req,res,_next,options) => {
     writeAudit(req,{action:'admin_login',operationType:'login_rate_limit',result:'denied',reasonCode:'rate_limit_exceeded'})
       .then(()=>res.status(options.statusCode).json({error:'Слишком много попыток входа. Попробуйте позже.'}),
