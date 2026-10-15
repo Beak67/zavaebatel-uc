@@ -51,10 +51,9 @@
 
 ## Верификация: фактический статус
 
-- **GitHub Actions Test run #43** завершился успешно для commit **7f54ad86c6d95aadd3fc789a7c5a51d4d38211f2**: `npm ci` — success; `npm test` — 12 пройдено, 0 упало. [Открыть успешный run #43](https://github.com/Beak67/zavaebatel-uc/actions/runs/38690082886).
-- `npm audit --omit=dev` завершился успешно в проверочном run [38690017465](https://github.com/Beak67/zavaebatel-uc/actions/runs/38690017465): **0 уязвимостей production-зависимостей** после обновления Express, Multer и express-session.
-- `package-lock.json` сгенерирован npm в Node.js 20 / npm 10 окружении GitHub Actions и закоммичен в эту ветку; он согласован с текущим `package.json`. Временный workflow, использованный только для bootstrap/проверки lock-файла, удалён.
-- Стандартный workflow `test.yml` сохраняет Node.js 20, `cache: npm`, `npm ci` и `npm test`. Неудачные более ранние запуски отражали отсутствие lock-файла и одну исправленную ошибку CSP-теста; актуальный стандартный run #43 успешен.
+- **GitHub Actions Test run #46** завершился успешно для commit **87f8727c6cf805cc30a35e79d2e47240c689ed03**: `npm ci` — успешно; `npm test` — 12 пройдено, 0 упало; `npm audit --omit=dev` — успешно, **0 уязвимостей production-зависимостей**. [Открыть успешный run #46](https://github.com/Beak67/zavaebatel-uc/actions/runs/38690179037).
+- `package-lock.json` сгенерирован npm в Node.js 20 / npm 10 окружении GitHub Actions и закоммичен в эту ветку; он согласован с текущим `package.json`.
+- Стандартный workflow `test.yml` проверяет Node.js 20, npm-кэширование, `npm ci`, `npm test` и `npm audit --omit=dev`. Ранее выявленные уязвимости закрыты обновлением Express, Multer и express-session; CSP-тест исправлен так, чтобы проверять именно директиву `script-src`, не запрещая inline-стили.
 
 ## База данных и миграции
 
