@@ -30,7 +30,7 @@ async function startApp({ databaseUrl, autoInit = 'false' }) {
       TRUST_PROXY_HOPS: '1',
       NEXUS_SHOP_ID: '',
       NEXUS_SHOP_TOKEN: '',
-      SBP_ENABLED: 'false'
+      SBP_ENABLED: 'true'
     },
     stdio: 'ignore'
   });
