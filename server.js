@@ -266,15 +266,22 @@ export async function getCatalog() {
   if (last?.kind) throw last;
   throw Object.assign(new Error('Nexus временно недоступен. Попробуйте позже.'), { kind: 'upstream_unavailable' });
 }
-async function requireDb(_req,res,next) {
+async function requireDb(req,res,next) {
   await dbReady;
+  const deny = async (reasonCode, message) => {
+    if (req.path.startsWith('/api/admin/') && pool && !dbError) {
+      try { await writeAudit(req,{action:'admin_prerequisite_check',result:'denied',reasonCode}); }
+      catch { return res.status(503).json({error:'Журнал аудита недоступен; административный доступ запрещён.'}); }
+    }
+    return res.status(503).json({error:message});
+  };
   if (!pool) return res.status(503).json({ error:'PostgreSQL не настроен: задайте DATABASE_URL.' });
   if (process.env.NODE_ENV === 'production' && !(Number.isInteger(trustProxyHops) && trustProxyHops >= 1 && trustProxyHops <= 5))
-    return res.status(503).json({ error:'Администрирование отключено: задайте TRUST_PROXY_HOPS согласно доверенной proxy-топологии Render.' });
-  if (!sessionConfigured) return res.status(503).json({ error:'Администрирование отключено: задайте DATABASE_URL и SESSION_SECRET длиной не менее 32 символов.' });
+    return deny('proxy_configuration_invalid','Администрирование отключено: задайте TRUST_PROXY_HOPS согласно доверенной proxy-топологии Render.');
+  if (!sessionConfigured) return deny('session_configuration_invalid','Администрирование отключено: задайте DATABASE_URL и SESSION_SECRET длиной не менее 32 символов.');
   if (dbError) return res.status(503).json({ error:'PostgreSQL недоступен или схема не инициализирована.' });
   if (!process.env.ADMIN_PASSWORD || process.env.ADMIN_PASSWORD.length < 20)
-    return res.status(503).json({ error:'Администрирование отключено: задайте ADMIN_PASSWORD длиной не менее 20 символов.' });
+    return deny('admin_credential_configuration_invalid','Администрирование отключено: задайте ADMIN_PASSWORD длиной не менее 20 символов.');
   next();
 }
 async function writeAudit(req, { action, result, reasonCode = null, targetType = null, targetId = null }) {
