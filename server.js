@@ -19,9 +19,20 @@ const base = (process.env.NEXUS_API_BASE || 'https://nexus.amadeustech.dev').tri
 const currency = process.env.NEXUS_PRICE_CURRENCY;
 const fx = Number(process.env.NEXUS_USD_RUB ?? 85);
 const markup = Number(process.env.SALE_MARKUP ?? 0.20);
-const dbHost = (() => { try { return new URL(process.env.DATABASE_URL || '').hostname.toLowerCase(); } catch { return ''; } })();
-const localDb = ['localhost', '127.0.0.1', '::1'].includes(dbHost);
-const pool = process.env.DATABASE_URL ? new Pool({ connectionString: process.env.DATABASE_URL, ssl: localDb ? false : { rejectUnauthorized: true }, connectionTimeoutMillis: 5000 }) : null;
+const databaseUrl = process.env.DATABASE_URL || '';
+const parsedDatabaseUrl = (() => { try { return new URL(databaseUrl); } catch { return null; } })();
+const dbHost = parsedDatabaseUrl?.hostname.toLowerCase() || '';
+const localDb = ['localhost', '127.0.0.1', '::1', '[::1]'].includes(dbHost);
+// pg-connection-string SSL query parameters can override the explicit ssl object; strip them so remote TLS verification stays enabled.
+if (parsedDatabaseUrl) {
+  for (const key of ['sslmode', 'ssl', 'sslcert', 'sslkey', 'sslrootcert']) parsedDatabaseUrl.searchParams.delete(key);
+}
+const dbConnectionString = parsedDatabaseUrl?.toString() || databaseUrl;
+const pool = databaseUrl ? new Pool({
+  connectionString: dbConnectionString,
+  ssl: localDb ? false : { rejectUnauthorized: true, ...(process.env.PGSSL_CA ? { ca: process.env.PGSSL_CA } : {}) },
+  connectionTimeoutMillis: 5000
+}) : null;
 const PgStore = connectPgSimple(session);
 let dbError = null;
 
