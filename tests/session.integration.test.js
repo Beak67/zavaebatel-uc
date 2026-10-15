@@ -1,0 +1,390 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
+import { createServer } from 'node:net';
+import { createHmac, createHash } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
+import pg from 'pg';
+import { PostgresRateLimitStore } from '../server.js';
+
+const SECRET = 'ci-only-session-secret-not-production-0123456789';
+const ADMIN_PASSWORD = 'ci-only-admin-password-never-production';
+const TEST_DATABASE_URL = process.env.TEST_DATABASE_URL || '';
+
+function assertSafeTestDatabaseUrl(value) {
+  let parsed;
+  try { parsed = new URL(value); } catch {
+    throw new Error('Refusing integration test: TEST_DATABASE_URL must be a valid local test-database URL.');
+  }
+  const host = parsed.hostname.toLowerCase();
+  const database = decodeURIComponent(parsed.pathname.replace(/^\//, ''));
+  const localHost = ['localhost', '127.0.0.1', '::1', '[::1]'].includes(host);
+  if (!['postgres:', 'postgresql:'].includes(parsed.protocol) || !localHost || !database.endsWith('_test')) {
+    throw new Error('Refusing integration test: TEST_DATABASE_URL must target a loopback host only and a database name ending in _test. No connection was attempted.');
+  }
+  return true;
+}
+
+// Fail before spawning a server or opening a database connection if the target is not clearly test-only.
+if (TEST_DATABASE_URL) assertSafeTestDatabaseUrl(TEST_DATABASE_URL);
+
+test('test database guard rejects non-local and non-test targets without connecting', () => {
+  for (const value of [
+    'postgresql://user:pass@production.example.com/app',
+    'postgresql://user:pass@127.0.0.1/app',
+    'https://127.0.0.1/zavaebatel_test'
+  ]) assert.throws(() => assertSafeTestDatabaseUrl(value), /Refusing integration test/);
+  assert.equal(assertSafeTestDatabaseUrl('postgresql://postgres:postgres@127.0.0.1:5432/zavaebatel_test'), true);
+});
+
+test('PostgreSQL migration is executable and idempotent on the isolated test database', { skip: !TEST_DATABASE_URL ? 'TEST_DATABASE_URL is not configured; CI runs this test with a local PostgreSQL service.' : false }, async () => {
+  assertSafeTestDatabaseUrl(TEST_DATABASE_URL);
+  const { Pool } = pg;
+  const pool = new Pool({ connectionString: TEST_DATABASE_URL, ssl: false, connectionTimeoutMillis: 3000 });
+  try {
+    for (const file of ['001_session_store_and_safe_admin.sql', '002_shared_rate_limits_and_audit.sql']) {
+      const sql = await readFile(new URL('../migrations/' + file, import.meta.url), 'utf8');
+      await pool.query(sql);
+      await pool.query(sql);
+    }
+    const result = await pool.query(`
+      SELECT to_regclass('public.user_sessions') AS user_sessions,
+             to_regclass('public.manual_orders') AS manual_orders,
+             to_regclass('public.admin_audit') AS admin_audit,
+             to_regclass('public.rate_limit_counters') AS rate_limit_counters,
+             to_regclass('public.manual_orders_created_at_idx') AS orders_created_index,
+             to_regclass('public.idx_user_sessions_expire') AS sessions_expiry_index,
+             to_regclass('public.rate_limit_counters_reset_at_idx') AS rate_limit_expiry_index,
+             (SELECT EXISTS (
+               SELECT 1 FROM pg_constraint c
+               JOIN pg_class t ON t.oid = c.conrelid
+               WHERE c.conrelid = 'public.rate_limit_counters'::regclass AND c.contype IN ('p','u')
+                 AND (SELECT array_agg(a.attname::text ORDER BY k.ordinality)
+                      FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ordinality)
+                      JOIN pg_attribute a ON a.attrelid=t.oid AND a.attnum=k.attnum)
+                     = ARRAY['limiter_name','key_hash']::text[]
+             )) AS has_shared_rate_limit_key
+    `);
+    for (const [name, value] of Object.entries(result.rows[0])) {
+      if (name === 'has_shared_rate_limit_key') assert.equal(value, true, 'ON CONFLICT key must have a real unique constraint');
+      else assert.ok(value, name + ' must exist after two migration runs');
+    }
+    const auditColumns = await pool.query(`SELECT column_name, is_nullable FROM information_schema.columns
+      WHERE table_schema='public' AND table_name='admin_audit'`);
+    const auditSchema = new Map(auditColumns.rows.map(row => [row.column_name, row.is_nullable]));
+    for (const name of ['operation_type','request_id','reason_code','target_type','target_id','session_hash']) assert.ok(auditSchema.has(name), name + ' audit field must exist');
+    assert.equal(auditSchema.get('order_public_id'), 'YES', 'audit rows must support non-order events such as login');
+  } finally {
+    await pool.end();
+  }
+});
+
+test('independent PostgreSQL rate-limit stores preserve atomic increments under real concurrency', { skip: !TEST_DATABASE_URL ? 'TEST_DATABASE_URL is not configured; CI runs this test with a local PostgreSQL service.' : false }, async () => {
+  assertSafeTestDatabaseUrl(TEST_DATABASE_URL);
+  const { Pool } = pg;
+  const pool = new Pool({ connectionString: TEST_DATABASE_URL, ssl: false, connectionTimeoutMillis: 3000 });
+  const limiterName = 'integration-shared-counter-test';
+  const clientKey = 'synthetic-client';
+  const keyHash = createHash('sha256').update(clientKey).digest('hex');
+  try {
+    await pool.query('DELETE FROM rate_limit_counters WHERE limiter_name = $1', [limiterName]);
+    const firstInstance = new PostgresRateLimitStore({ pool, limiterName });
+    const secondInstance = new PostgresRateLimitStore({ pool, limiterName });
+    firstInstance.init({ windowMs: 60_000 });
+    secondInstance.init({ windowMs: 60_000 });
+    const total = 100;
+    const simultaneous = await Promise.all(Array.from({ length: total }, (_, i) =>
+      (i % 2 === 0 ? firstInstance : secondInstance).increment(clientKey)));
+    assert.deepEqual(simultaneous.map(item => item.totalHits).sort((a,b) => a-b),
+      Array.from({ length: total }, (_, i) => i + 1),
+      'parallel increments must return each sequential counter value exactly once');
+    const stored = await pool.query('SELECT key_hash, hits FROM rate_limit_counters WHERE limiter_name = $1 AND key_hash = $2',
+      [limiterName, keyHash]);
+    assert.equal(stored.rows.length, 1, 'one limiter/key pair must occupy exactly one row');
+    assert.equal(Number(stored.rows[0].hits), total, 'persisted count must equal successful increments');
+    assert.match(stored.rows[0].key_hash, /^[a-f0-9]{64}$/);
+    assert.notEqual(stored.rows[0].key_hash, clientKey, 'raw client keys must not be stored');
+
+    // Expire the row deterministically in the isolated test database rather than relying on
+    // scheduling a sleep that could overlap the high-concurrency phase.
+    await pool.query("UPDATE rate_limit_counters SET reset_at = NOW() - INTERVAL '1 second' WHERE limiter_name = $1 AND key_hash = $2",
+      [limiterName, keyHash]);
+    assert.equal((await secondInstance.increment(clientKey)).totalHits, 1, 'expired counter must reset');
+    await firstInstance.resetKey(clientKey);
+    assert.equal((await secondInstance.increment(clientKey)).totalHits, 1, 'resetKey must clear shared counter');
+  } finally {
+    await pool.query('DELETE FROM rate_limit_counters WHERE limiter_name = $1', [limiterName]).catch(()=>{});
+    await pool.end();
+  }
+  const noStore = new PostgresRateLimitStore({ pool: null, limiterName: 'missing-store-test' });
+  await assert.rejects(noStore.increment('client'), error => error.code === 'RATE_LIMIT_STORE_UNAVAILABLE');
+});
+
+test('rate-limit increment ignores cleanup failure but fails closed when the UPSERT fails', async () => {
+  const warnings = [];
+  const originalWarn = console.warn;
+  console.warn = (...args) => warnings.push(args);
+  try {
+    const cleanupStore = new PostgresRateLimitStore({
+      limiterName: 'cleanup-failure-test',
+      pool: { query: async sql => {
+        if (sql.includes('INSERT INTO rate_limit_counters')) {
+          return { rows: [{ hits: 17, reset_at: new Date('2030-01-01T00:00:00Z') }] };
+        }
+        if (sql.includes('DELETE FROM rate_limit_counters')) throw Object.assign(new Error('secret connection details'), { code: 'XX000' });
+        throw new Error('unexpected query');
+      } }
+    });
+    cleanupStore.operations = 99;
+    const result = await cleanupStore.increment('synthetic-cleanup-client');
+    assert.equal(result.totalHits, 17, 'successful UPSERT result must be returned even if ancillary cleanup fails');
+    assert.equal(warnings.length, 1, 'cleanup failure must be observable');
+    assert.equal(warnings[0][0], 'rate_limit_cleanup_failed');
+    assert.doesNotMatch(JSON.stringify(warnings), /secret connection details|synthetic-cleanup-client/i);
+
+    const failedUpsert = new PostgresRateLimitStore({
+      limiterName: 'upsert-failure-test',
+      pool: { query: async sql => {
+        if (sql.includes('INSERT INTO rate_limit_counters')) throw Object.assign(new Error('secret database detail'), { code: '42501' });
+        throw new Error('unexpected query');
+      } }
+    });
+    await assert.rejects(failedUpsert.increment('synthetic-upsert-client'), error =>
+      error.code === 'RATE_LIMIT_STORE_UNAVAILABLE' && error.status === 503 &&
+      error.message === 'Shared rate-limit storage is unavailable' &&
+      !error.message.includes('secret database detail'));
+  } finally {
+    console.warn = originalWarn;
+  }
+});
+
+test('rate-limit UPSERT fails closed on a PostgreSQL lock timeout', { skip: !TEST_DATABASE_URL ? 'TEST_DATABASE_URL is not configured; CI runs this test with a local PostgreSQL service.' : false }, async () => {
+  assertSafeTestDatabaseUrl(TEST_DATABASE_URL);
+  const { Pool } = pg;
+  const setupPool = new Pool({ connectionString: TEST_DATABASE_URL, ssl: false, connectionTimeoutMillis: 1000 });
+  const timeoutPool = new Pool({
+    connectionString: TEST_DATABASE_URL, ssl: false, max: 2,
+    connectionTimeoutMillis: 1000, query_timeout: 2500, statement_timeout: 2000, lock_timeout: 300
+  });
+  const limiterName = 'integration-rate-limit-timeout-test';
+  const clientKey = 'synthetic-timeout-client';
+  const keyHash = createHash('sha256').update(clientKey).digest('hex');
+  const blocker = await setupPool.connect();
+  try {
+    await setupPool.query('DELETE FROM rate_limit_counters WHERE limiter_name = $1', [limiterName]);
+    await setupPool.query('INSERT INTO rate_limit_counters (limiter_name, key_hash, hits, reset_at) VALUES ($1, $2, 1, NOW() + INTERVAL \'1 minute\')',
+      [limiterName, keyHash]);
+    await blocker.query('BEGIN');
+    await blocker.query('UPDATE rate_limit_counters SET hits = hits + 1 WHERE limiter_name = $1 AND key_hash = $2',
+      [limiterName, keyHash]);
+    const store = new PostgresRateLimitStore({ pool: timeoutPool, limiterName });
+    store.init({ windowMs: 60_000 });
+    const started = Date.now();
+    await assert.rejects(store.increment(clientKey), error =>
+      error.code === 'RATE_LIMIT_STORE_UNAVAILABLE' && error.status === 503,
+      'a timed-out main UPSERT must fail closed without a local fallback');
+    assert.ok(Date.now() - started < 1500, 'lock timeout must bound the failed request');
+  } finally {
+    await blocker.query('ROLLBACK').catch(()=>{});
+    blocker.release();
+    await setupPool.query('DELETE FROM rate_limit_counters WHERE limiter_name = $1', [limiterName]).catch(()=>{});
+    await timeoutPool.end();
+    await setupPool.end();
+  }
+});
+
+async function freePort() {
+  const server = createServer();
+  await new Promise((resolve, reject) => server.once('error', reject).listen(0, '127.0.0.1', resolve));
+  const port = server.address().port;
+  await new Promise(resolve => server.close(resolve));
+  return port;
+}
+async function startApp({ databaseUrl, autoInit = 'false' }) {
+  const port = await freePort();
+  const child = spawn(process.execPath, ['server.js'], {
+    cwd: process.cwd(),
+    env: {
+      ...process.env,
+      NODE_ENV: 'production',
+      PORT: String(port),
+      DATABASE_URL: databaseUrl,
+      DB_AUTO_INIT: autoInit,
+      SESSION_SECRET: SECRET,
+      ADMIN_PASSWORD,
+      TRUST_PROXY_HOPS: '1',
+      NEXUS_SHOP_ID: '',
+      NEXUS_SHOP_TOKEN: '',
+      SBP_ENABLED: 'true'
+    },
+    stdio: 'ignore'
+  });
+  const base = `http://127.0.0.1:${port}`;
+  let ready = false;
+  for (let i = 0; i < 80; i++) {
+    if (child.exitCode !== null) break;
+    try {
+      const r = await fetch(base + '/api/payment-info');
+      if (r.status === 200) { ready = true; break; }
+    } catch {}
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  if (!ready) {
+    child.kill('SIGTERM');
+    throw new Error('Test server did not start; no environment values were logged.');
+  }
+  return { child, base, stop: () => child.kill('SIGTERM') };
+}
+function signedSessionCookie(sid = 'session-store-outage-check') {
+  const signature = createHmac('sha256', SECRET).update(sid).digest('base64').replace(/=+$/, '');
+  return `zuc.sid=s%3A${sid}.${signature}`;
+}
+
+test('PostgreSQL-backed admin sessions, login, CSRF, logout, and safe-mode admin actions', { skip: !TEST_DATABASE_URL ? 'TEST_DATABASE_URL is not configured; CI runs this test with a real PostgreSQL service.' : false }, async () => {
+  const app = await startApp({ databaseUrl: TEST_DATABASE_URL, autoInit: 'true' });
+  try {
+    const unauth = await fetch(app.base + '/api/admin/orders');
+    assert.equal(unauth.status, 401);
+
+    const wrongOrigin = await fetch(app.base + '/api/admin/login', {
+      method: 'POST', headers: { 'content-type': 'application/json', origin: 'https://attacker.invalid', 'x-forwarded-proto': 'https' },
+      body: JSON.stringify({ password: ADMIN_PASSWORD })
+    });
+    assert.equal(wrongOrigin.status, 403);
+
+    const badLogin = await fetch(app.base + '/api/admin/login', {
+      method: 'POST', headers: { 'content-type': 'application/json', origin: app.base, 'x-forwarded-proto': 'https' },
+      body: JSON.stringify({ password: 'incorrect-password' })
+    });
+    assert.equal(badLogin.status, 401);
+
+    const login = await fetch(app.base + '/api/admin/login', {
+      method: 'POST', headers: { 'content-type': 'application/json', origin: app.base, 'x-forwarded-proto': 'https' },
+      body: JSON.stringify({ password: ADMIN_PASSWORD })
+    });
+    assert.equal(login.status, 200);
+    const setCookie = login.headers.get('set-cookie') || '';
+    assert.match(setCookie, /HttpOnly/i);
+    assert.match(setCookie, /Secure/i);
+    assert.match(setCookie, /SameSite=Strict/i);
+    const cookie = setCookie.split(';', 1)[0];
+    assert.match(cookie, /^zuc\.sid=/);
+    const loginBody = await login.json();
+    assert.equal(typeof loginBody.csrfToken, 'string');
+    assert.ok(loginBody.csrfToken.length >= 32);
+
+    const session = await fetch(app.base + '/api/admin/session', { headers: { cookie } });
+    assert.equal(session.status, 200);
+    assert.equal((await session.json()).csrfToken, loginBody.csrfToken);
+
+    const orders = await fetch(app.base + '/api/admin/orders', { headers: { cookie } });
+    assert.equal(orders.status, 200);
+
+    // The configured threshold remains 8 requests per 15 minutes; Origin denials and bad credentials count too.
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const denied = await fetch(app.base + '/api/admin/login', {
+        method: 'POST', headers: { 'content-type': 'application/json', origin: app.base, 'x-forwarded-proto': 'https' },
+        body: JSON.stringify({ password: 'wrong-password-for-rate-limit-test' })
+      });
+      assert.equal(denied.status, 401, 'attempts up to the configured threshold remain ordinary authentication failures');
+    }
+    const limitedLogin = await fetch(app.base + '/api/admin/login', {
+      method: 'POST', headers: { 'content-type': 'application/json', origin: app.base, 'x-forwarded-proto': 'https' },
+      body: JSON.stringify({ password: 'wrong-password-for-rate-limit-test' })
+    });
+    assert.equal(limitedLogin.status, 429, 'the ninth request within the window exceeds the existing limit of eight');
+
+    const noCsrfLogout = await fetch(app.base + '/api/admin/logout', {
+      method: 'POST', headers: { cookie, 'content-type': 'application/json' }, body: '{}'
+    });
+    assert.equal(noCsrfLogout.status, 403);
+
+    const badCsrfLogout = await fetch(app.base + '/api/admin/logout', {
+      method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': 'wrong-token' }, body: '{}'
+    });
+    assert.equal(badCsrfLogout.status, 403);
+
+    for (const action of ['fulfill', 'approve-payment', 'mark-paid', 'cancel', 'complete']) {
+      const disabledAction = await fetch(app.base + '/api/admin/orders/00000000-0000-4000-8000-000000000000/' + action, {
+        method: 'POST',
+        headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': loginBody.csrfToken },
+        body: '{}'
+      });
+      assert.equal(disabledAction.status, 503, action + ' must remain disabled even for an authenticated administrator');
+    }
+
+    const paymentInfo = await fetch(app.base + '/api/payment-info');
+    assert.equal(paymentInfo.status, 200);
+    assert.equal((await paymentInfo.json()).enabled, false, 'payment instructions must stay disabled with SBP_ENABLED=true');
+
+    const disabledOrder = await fetch(app.base + '/api/orders', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ productId: 'pubg-mobile:uc:60', playerId: 'test-player' })
+    });
+    assert.equal(disabledOrder.status, 503);
+
+    const disabledReceipt = await fetch(app.base + '/api/orders/00000000-0000-4000-8000-000000000000/receipt', { method: 'POST' });
+    assert.equal(disabledReceipt.status, 503);
+
+    const logout = await fetch(app.base + '/api/admin/logout', {
+      method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': loginBody.csrfToken }, body: '{}'
+    });
+    assert.equal(logout.status, 200);
+    assert.match(logout.headers.get('set-cookie') || '', /Expires=.*1970/i);
+    const afterLogout = await fetch(app.base + '/api/admin/session', { headers: { cookie } });
+    assert.equal(afterLogout.status, 401);
+
+    const auditPool = new pg.Pool({ connectionString: TEST_DATABASE_URL, ssl: false, connectionTimeoutMillis: 3000 });
+    try {
+      const auditRows = await auditPool.query(`SELECT action, operation_type, result, reason_code, request_id, session_hash, order_public_id
+        FROM admin_audit WHERE request_id IS NOT NULL ORDER BY id`);
+      const auditText = JSON.stringify(auditRows.rows);
+      assert.match(auditText, /admin_login/);
+      assert.match(auditText, /invalid_credentials/);
+      assert.ok(auditRows.rows.some(row => row.action === 'admin_login' && row.result === 'denied' && row.reason_code === 'invalid_credentials'));
+      assert.ok(auditRows.rows.some(row => row.action === 'admin_login' && row.result === 'success'));
+      assert.ok(auditRows.rows.some(row => row.action === 'admin_login' && row.operation_type === 'login_rate_limit' && row.result === 'denied' && row.reason_code === 'rate_limit_exceeded'));
+      assert.match(auditText, /admin_origin_check/);
+      assert.match(auditText, /admin_csrf_check/);
+      assert.match(auditText, /admin_order_action/);
+      assert.match(auditText, /safe_mode_disabled/);
+      assert.match(auditText, /approve-payment|fulfill|mark-paid|cancel|complete/);
+      assert.ok(auditRows.rows.some(row => row.action === 'admin_order_action' && row.result === 'denied' && row.reason_code === 'safe_mode_disabled' && row.operation_type === 'fulfill'));
+      assert.ok(auditRows.rows.some(row => row.action === 'admin_orders_view' && row.result === 'success'));
+      assert.match(auditText, /admin_orders_view/);
+      assert.ok(auditRows.rows.every(row => typeof row.request_id === 'string'), 'every structured audit row has a request ID');
+      assert.ok(auditRows.rows.every(row => row.session_hash === null || /^[a-f0-9]{64}$/.test(row.session_hash)), 'session identifiers are stored only as hashes');
+      assert.doesNotMatch(auditText, new RegExp(ADMIN_PASSWORD));
+      assert.doesNotMatch(auditText, /ci-only-session-secret|zuc\.sid|csrfToken|test-token/i);
+    } finally { await auditPool.end(); }
+
+    const health = await fetch(app.base + '/api/health');
+    assert.equal(health.status, 200);
+    assert.equal((await health.json()).ordersEnabled, false);
+  } finally {
+    app.stop();
+  }
+});
+
+test('unavailable PostgreSQL session storage fails closed and never falls back to MemoryStore', async () => {
+  const app = await startApp({ databaseUrl: 'postgres://postgres:postgres@127.0.0.1:1/zavaebatel_test', autoInit: 'false' });
+  try {
+    const health = await fetch(app.base + '/api/health');
+    assert.equal(health.status, 503);
+
+    const login = await fetch(app.base + '/api/admin/login', {
+      method: 'POST', headers: { 'content-type': 'application/json', origin: app.base, 'x-forwarded-proto': 'https' },
+      body: JSON.stringify({ password: ADMIN_PASSWORD })
+    });
+    assert.equal(login.status, 503);
+    assert.equal(login.headers.get('set-cookie'), null);
+
+    const sessionLookup = await fetch(app.base + '/api/admin/session', { headers: { cookie: signedSessionCookie() } });
+    assert.equal(sessionLookup.status, 503);
+    const body = await sessionLookup.json();
+    assert.match(body.error, /недоступны/i);
+    assert.doesNotMatch(JSON.stringify(body), /postgres:postgres|SESSION_SECRET|ADMIN_PASSWORD/i);
+  } finally {
+    app.stop();
+  }
+});

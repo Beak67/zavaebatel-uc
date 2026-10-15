@@ -1,0 +1,224 @@
+import test from 'node:test';
+import express from 'express';
+import assert from 'node:assert/strict';
+import http from 'node:http';
+import { spawnSync } from 'node:child_process';
+import { readFile } from 'node:fs/promises';
+
+// Exercise safe-mode guards with the opt-in flag set; business operations must remain disabled.
+process.env.SBP_ENABLED = 'true';
+process.env.NEXUS_PRICE_CURRENCY = 'USD';
+process.env.NEXUS_USD_RUB = '85';
+process.env.SALE_MARKUP = '0.20';
+const { default: app, normalizeProducts, retailPrice, getCatalog, asyncHandler, missingRequiredSchemaColumns, hasSharedRateLimitUniqueKey, PostgresRateLimitStore } = await import('../server.js');
+process.env.NEXUS_SHOP_ID = 'test-shop';
+process.env.NEXUS_SHOP_TOKEN = 'test-token';
+
+test('async route wrapper forwards rejected promises to Express error middleware', async () => {
+  const failure = new Error('database query failed');
+  const testApp = express();
+  testApp.get('/async-error', asyncHandler(async () => { throw failure; }));
+  testApp.use((error, _req, res, _next) => {
+    assert.equal(error, failure);
+    res.status(500).json({ error: 'handled by Express error middleware' });
+  });
+
+  const server = http.createServer(testApp);
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const address = server.address();
+    const response = await fetch(`http://127.0.0.1:${address.port}/async-error`);
+    assert.equal(response.status, 500);
+    assert.deepEqual(await response.json(), { error: 'handled by Express error middleware' });
+  } finally {
+    await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+  }
+});
+
+test('normalizes UC products and excludes unrelated product IDs', () => {
+  assert.deepEqual(normalizeProducts({ products: [
+    { id: 'pubg-mobile:uc:60', name: '60 UC', price: '1.2' },
+    { id: 'other:thing', price: 3 }
+  ] }), [{ id: 'pubg-mobile:uc:60', name: '60 UC', icon: null, priceUsd: 1.2 }]);
+});
+test('rejects unrecognized supplier response', () => assert.throws(() => normalizeProducts({ unexpected: true }), /списка товаров/));
+test('rejects zero, negative, and non-numeric supplier prices', () => {
+  for (const price of [0, -1, 'not-a-price', '', Infinity]) {
+    assert.throws(() => normalizeProducts([{ id: 'pubg-mobile:uc:60', price }]), /price|цен/);
+  }
+});
+test('retail price is USD price × 85 × 1.20, rounded to kopecks', () => {
+  assert.equal(retailPrice(1.23), 125.46);
+  assert.equal(retailPrice(1.25), 127.5);
+});
+test('missing currency is rejected in a clean process', () => {
+  const code = "import('./server.js').then(m => { try { m.retailPrice(1); process.exit(2); } catch (e) { if (!e.message.includes('NEXUS_PRICE_CURRENCY')) process.exit(3); } })";
+  const result = spawnSync(process.execPath, ['--input-type=module', '-e', code], {
+    cwd: process.cwd(), env: { ...process.env, NEXUS_PRICE_CURRENCY: '' }, encoding: 'utf8'
+  });
+  assert.equal(result.status, 0, result.stderr);
+});
+test('fetches and normalizes a successful Nexus response', async () => {
+  const original = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({ products: [{ id: 'pubg-mobile:uc:60', name: '60 UC', price: 1.25 }] }), { status: 200, headers: { 'content-type': 'application/json' } });
+  try { assert.deepEqual(await getCatalog(), [{ id: 'pubg-mobile:uc:60', name: '60 UC', icon: null, priceUsd: 1.25 }]); }
+  finally { globalThis.fetch = original; }
+});
+test('rejects malformed Nexus JSON without exposing authorization data', async () => {
+  const original = globalThis.fetch;
+  globalThis.fetch = async () => new Response('not-json', { status: 200 });
+  try { await assert.rejects(getCatalog(), /некорректный JSON/); }
+  finally { globalThis.fetch = original; }
+});
+test('bounds retries after temporary Nexus timeout', async () => {
+  const original = globalThis.fetch; let calls = 0;
+  globalThis.fetch = async () => { calls++; throw Object.assign(new Error('network'), { name: 'TimeoutError' }); };
+  try { await assert.rejects(getCatalog(), /временно недоступен/); assert.equal(calls, 2); }
+  finally { globalThis.fetch = original; }
+});
+test('does not retry non-transient Nexus HTTP errors indefinitely', async () => {
+  const original = globalThis.fetch; let calls = 0;
+  globalThis.fetch = async () => { calls++; return new Response('denied', { status: 401 }); };
+  try { await assert.rejects(getCatalog(), /HTTP 401/); assert.equal(calls, 1); }
+  finally { globalThis.fetch = original; }
+});
+test('handles a network-level Nexus outage with bounded retries', async () => {
+  const original = globalThis.fetch; let calls = 0;
+  globalThis.fetch = async () => { calls++; throw new TypeError('network unavailable'); };
+  try {
+    await assert.rejects(getCatalog(), /Nexus временно недоступен/);
+    assert.equal(calls, 2);
+  } finally { globalThis.fetch = original; }
+});
+
+test('production session configuration has no MemoryStore fallback and fails closed', async () => {
+  const source = await readFile(new URL('../server.js', import.meta.url), 'utf8');
+  assert.match(source, /connectPgSimple\(session\)/);
+  assert.match(source, /createTableIfMissing:\s*false/);
+  assert.doesNotMatch(source, /new session\.MemoryStore|MemoryStore\s*\(/);
+  assert.doesNotMatch(source, /development-only-not-for-production/);
+  assert.match(source, /secure:\s*process\.env\.NODE_ENV\s*===\s*'production'/);
+  assert.match(source, /sameSite:\s*'strict'/);
+  assert.match(source, /maxAge:\s*4\s*\*\s*60\s*\*\s*60\s*\*\s*1000/);
+  assert.match(source, /function requireCsrf/);
+  assert.match(source, /function requireSameOrigin/);
+  assert.match(source, /SESSION_SECRET\.length\s*>=\s*32/);
+  assert.match(source, /ADMIN_PASSWORD\.length\s*<\s*20/);
+});
+
+test('schema readiness rejects missing required PostgreSQL columns', () => {
+  const columns = {
+    user_sessions: ['sid', 'sess', 'expire'],
+    manual_orders: ['public_id', 'access_secret_hash', 'product_id', 'product_name', 'player_id',
+      'amount_rub', 'status', 'receipt_data', 'receipt_mime', 'receipt_uploaded_at', 'admin_note',
+      'reviewed_at', 'reviewed_by', 'created_at'],
+    admin_audit: ['order_public_id', 'action', 'operation_type', 'result', 'admin_identity', 'created_at', 'request_id', 'reason_code', 'target_type', 'target_id', 'session_hash'],
+    rate_limit_counters: ['limiter_name', 'key_hash', 'hits', 'reset_at']
+  };
+  const rows = Object.entries(columns).flatMap(([table_name, names]) => names.map(column_name => ({ table_name, column_name })));
+  assert.deepEqual(missingRequiredSchemaColumns(rows), []);
+  assert.deepEqual(missingRequiredSchemaColumns(rows.filter(row => !(row.table_name === 'manual_orders' && row.column_name === 'status'))), ['manual_orders.status']);
+  assert.ok(missingRequiredSchemaColumns([]).includes('user_sessions.sid'));
+  assert.ok(missingRequiredSchemaColumns(rows.filter(row => row.table_name !== 'rate_limit_counters')).includes('rate_limit_counters.limiter_name'));
+  assert.equal(hasSharedRateLimitUniqueKey({ has_shared_rate_limit_key: true }), true);
+  assert.equal(hasSharedRateLimitUniqueKey({ has_shared_rate_limit_key: false }), false);
+  assert.equal(hasSharedRateLimitUniqueKey(undefined), false);
+});
+
+test('database migrations are additive and never rewrite order statuses', async () => {
+  const migration = await readFile(new URL('../migrations/001_session_store_and_safe_admin.sql', import.meta.url), 'utf8');
+  const auditMigration = await readFile(new URL('../migrations/002_shared_rate_limits_and_audit.sql', import.meta.url), 'utf8');
+  assert.match(migration, /CREATE TABLE IF NOT EXISTS user_sessions/);
+  assert.match(migration, /CREATE TABLE IF NOT EXISTS admin_audit/);
+  assert.match(migration, /ADD COLUMN IF NOT EXISTS reviewed_by/);
+  assert.match(auditMigration, /CREATE TABLE IF NOT EXISTS rate_limit_counters/);
+  assert.match(auditMigration, /ADD COLUMN IF NOT EXISTS request_id/);
+  assert.match(auditMigration, /ALTER COLUMN order_public_id DROP NOT NULL/);
+  assert.doesNotMatch(migration + auditMigration, /DROP TABLE|TRUNCATE|DELETE FROM|UPDATE manual_orders|ALTER COLUMN status/i);
+});
+
+test('rate limiting requires the shared PostgreSQL store and fails closed without leaking storage errors', async () => {
+  const source = await readFile(new URL('../server.js', import.meta.url), 'utf8');
+  assert.match(source, /store:\s*new PostgresRateLimitStore\(\{ pool: rateLimitPool, limiterName: 'admin-login' \}\)/);
+  assert.match(source, /store:\s*new PostgresRateLimitStore\(\{ pool: rateLimitPool, limiterName: 'order-create' \}\)/);
+  assert.match(source, /store:\s*new PostgresRateLimitStore\(\{ pool: rateLimitPool, limiterName: 'receipt-upload' \}\)/);
+  assert.match(source, /connectionTimeoutMillis: 1000,\s*query_timeout: 2500,\s*statement_timeout: 2000,\s*lock_timeout: 500/);
+  const absent = new PostgresRateLimitStore({ pool: null, limiterName: 'unit-test' });
+  await assert.rejects(absent.increment('synthetic-client'), error => error.code === 'RATE_LIMIT_STORE_UNAVAILABLE');
+  const broken = new PostgresRateLimitStore({ pool: { query: async () => { throw new Error('do-not-expose-this'); } }, limiterName: 'unit-test' });
+  await assert.rejects(broken.increment('synthetic-client'), error => error.code === 'RATE_LIMIT_STORE_UNAVAILABLE' && !error.message.includes('do-not-expose-this'));
+});
+
+test('public assets contain no configured test credentials', async () => {
+  for (const file of ['public/index.html', 'public/storefront.js', 'public/admin.js', 'public/logo.svg', 'admin.html']) {
+    const content = await readFile(new URL('../' + file, import.meta.url), 'utf8');
+    assert.doesNotMatch(content, /test-token|test-shop|SESSION_SECRET=|NEXUS_SHOP_TOKEN=/, file);
+  }
+});
+
+test('Render routes, public assets, missing files and disabled sales', async () => {
+  const originalFetch = globalThis.fetch;
+  const server = http.createServer(app);
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const url = 'http://127.0.0.1:' + server.address().port;
+  // Stub only outbound supplier calls; keep requests to the local test server real.
+  globalThis.fetch = async (input, init) => String(input).startsWith(url)
+    ? originalFetch(input, init)
+    : new Response('denied', { status: 401 });
+  try {
+    const home = await fetch(url + '/');
+    assert.equal(home.status, 200);
+    const html = await home.text();
+    assert.match(html, /ZAVAEBATEL UC/);
+    assert.match(html, /src="\/storefront\.js"/);
+    assert.match(home.headers.get('content-security-policy') || '', /script-src 'self'/);
+    const scriptDirective = (home.headers.get('content-security-policy') || '').split(';').find(part => part.trim().startsWith('script-src ')) || '';
+    assert.doesNotMatch(scriptDirective, /unsafe-inline/);
+    assert.equal((await fetch(url + '/logo.svg')).status, 200);
+    assert.equal((await fetch(url + '/storefront.js')).status, 200);
+    assert.equal((await fetch(url + '/admin.js')).status, 200);
+    assert.equal((await fetch(url + '/admin')).status, 200);
+    assert.equal((await fetch(url + '/definitely-missing-static-file.js')).status, 404);
+    const health = await fetch(url + '/api/health');
+    assert.equal(health.status, 503, 'an unconfigured database must not be reported healthy');
+    assert.match(health.headers.get('content-type'), /application\/json/);
+    const healthBody = await health.json();
+    assert.equal(healthBody.ok, false);
+    assert.equal(healthBody.database, 'not_configured');
+    assert.equal(healthBody.ordersEnabled, false);
+    assert.doesNotMatch(JSON.stringify(healthBody), /test-token|test-shop|Authorization/i);
+    const catalog = await fetch(url + '/api/catalog');
+    assert.ok([502, 503].includes(catalog.status));
+    const catalogBody = await catalog.json();
+    assert.equal(typeof catalogBody.error, 'string');
+    assert.doesNotMatch(JSON.stringify(catalogBody), /test-token|test-shop|Authorization/i);
+    for (const p of ['/server.js', '/package.json', '/.env', '/README.md', '/admin.html']) assert.equal((await fetch(url + p)).status, 404, p);
+    const orders = await fetch(url + '/api/orders', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ productId: 'pubg-mobile:uc:60', playerId: '12345' }) });
+    assert.equal(orders.status, 503);
+    const receipt = await fetch(url + '/api/orders/00000000-0000-4000-8000-000000000000/receipt', { method: 'POST' });
+    assert.equal(receipt.status, 503);
+    const malformedJson = await fetch(url + '/api/admin/login', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: '{'
+    });
+    assert.equal(malformedJson.status, 400);
+    const malformedBody = await malformedJson.json();
+    assert.equal(malformedBody.error, 'Некорректный запрос.');
+    assert.doesNotMatch(JSON.stringify(malformedBody), /test-token|test-shop|SESSION_SECRET|ADMIN_PASSWORD/i);
+    const adminOrders = await fetch(url + '/api/admin/orders');
+    assert.equal(adminOrders.status, 503, 'database is absent in this isolated smoke test; protected data must not be returned');
+    const payment = await fetch(url + '/api/payment-info');
+    const paymentBody = await payment.json();
+    assert.equal(paymentBody.enabled, false);
+    assert.match(paymentBody.message, /отключены/);
+    const unknownApi = await fetch(url + '/api/this-route-does-not-exist');
+    assert.equal(unknownApi.status, 404);
+    assert.match(unknownApi.headers.get('content-type') || '', /application\/json/);
+    assert.doesNotMatch(await unknownApi.text(), /test-token|test-shop/);
+    const unknownPage = await fetch(url + '/this-page-does-not-exist');
+    assert.equal(unknownPage.status, 404);
+
+  } finally {
+    globalThis.fetch = originalFetch;
+    await new Promise(resolve => server.close(resolve));
+  }
+});
