@@ -31,5 +31,6 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
+      - run: node --check server.js && node --check public/admin.js && node --check public/storefront.js
       - run: npm test
       - run: npm audit --omit=dev
