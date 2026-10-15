@@ -138,6 +138,13 @@ test('Render routes, public assets, missing files and disabled sales', async () 
     assert.equal(orders.status, 503);
     const receipt = await fetch(url + '/api/orders/00000000-0000-4000-8000-000000000000/receipt', { method: 'POST' });
     assert.equal(receipt.status, 503);
+    const malformedJson = await fetch(url + '/api/admin/login', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: '{'
+    });
+    assert.equal(malformedJson.status, 400);
+    const malformedBody = await malformedJson.json();
+    assert.equal(malformedBody.error, 'Некорректный запрос.');
+    assert.doesNotMatch(JSON.stringify(malformedBody), /test-token|test-shop|SESSION_SECRET|ADMIN_PASSWORD/i);
     const adminOrders = await fetch(url + '/api/admin/orders');
     assert.equal(adminOrders.status, 503, 'database is absent in this isolated smoke test; protected data must not be returned');
     const payment = await fetch(url + '/api/payment-info');
