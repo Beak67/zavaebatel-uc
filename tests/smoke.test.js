@@ -1,4 +1,5 @@
 import test from 'node:test';
+import express from 'express';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { spawnSync } from 'node:child_process';
@@ -13,10 +14,23 @@ process.env.NEXUS_SHOP_TOKEN = 'test-token';
 
 test('async route wrapper forwards rejected promises to Express error middleware', async () => {
   const failure = new Error('database query failed');
-  let received;
-  const handler = asyncHandler(async () => { throw failure; });
-  await handler({}, {}, error => { received = error; });
-  assert.equal(received, failure);
+  const testApp = express();
+  testApp.get('/async-error', asyncHandler(async () => { throw failure; }));
+  testApp.use((error, _req, res, _next) => {
+    assert.equal(error, failure);
+    res.status(500).json({ error: 'handled by Express error middleware' });
+  });
+
+  const server = http.createServer(testApp);
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const address = server.address();
+    const response = await fetch(`http://127.0.0.1:${address.port}/async-error`);
+    assert.equal(response.status, 500);
+    assert.deepEqual(await response.json(), { error: 'handled by Express error middleware' });
+  } finally {
+    await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+  }
 });
 
 test('normalizes UC products and excludes unrelated product IDs', () => {
