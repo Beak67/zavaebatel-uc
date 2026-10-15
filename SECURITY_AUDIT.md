@@ -3,7 +3,7 @@
 **Scope:** repository review and safe CI tests on `security/audit-safe-storefront`. No production deployment, production configuration change, production database connection, real order/payment/receipt upload, or UC fulfillment was performed.
 
 **Tested application/test revision:** `dcdec4de4959a2834a0aa7e1aa07aa64bb873371`  
-**CI evidence:** [Run #179](https://github.com/Beak67/zavaebatel-uc/actions/runs/38697844156) passed on the latest documentation-updated branch head; it ran `npm ci`, syntax checks, `npm test` (20 passed, 0 failed, 0 skipped), and `npm audit --omit=dev` (0 production dependency vulnerabilities reported). The tested application/test revision is `dcdec4de4959a2834a0aa7e1aa07aa64bb873371`; commits after it only changed documentation.
+**CI evidence:** [Run #179](https://github.com/Beak67/zavaebatel-uc/actions/runs/38697844156) passed on a documentation-updated branch revision; it ran `npm ci`, syntax checks, `npm test` (20 passed, 0 failed, 0 skipped), and `npm audit --omit=dev` (0 production dependency vulnerabilities reported). The tested application/test revision is `dcdec4de4959a2834a0aa7e1aa07aa64bb873371`; subsequent commits only changed documentation.
 
 ## Decision
 
