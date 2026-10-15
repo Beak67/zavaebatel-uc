@@ -22,7 +22,7 @@ npm test
 npm audit --omit=dev
 ```
 
-Workflow `.github/workflows/test.yml` запускает проверки в Node.js 20 и PostgreSQL 16. Run [#114](https://github.com/Beak67/zavaebatel-uc/actions/runs/38694541262) успешно завершился на PR merge ref, содержащем branch head `317011b111d8be11defc67fb9adebe0e1b5402dc`: `npm ci`, синтаксические проверки, `npm test` и `npm audit --omit=dev` — success. В логах run #114 контейнер PostgreSQL сначала ожидал health status `healthy`, затем job продолжился; ошибки и провала на `Initialize containers` нет. После этого обновлён регрессионный тест: теперь он вызывает реальный Express error middleware через HTTP и запускает тесты с `SBP_ENABLED=true`. Эти последние изменения требуют отдельного CI-run; run #114 не подтверждает их.
+Workflow `.github/workflows/test.yml` запускает проверки в Node.js 20 и PostgreSQL 16. [Run #124](https://github.com/Beak67/zavaebatel-uc/actions/runs/38695030162) успешно проверил application/test code на branch HEAD `68368ec4b0a3f2413bd2a44ce0ee643fe5e2adf6`: `npm ci`, синтаксические проверки, `npm test` (17/17) и `npm audit --omit=dev` — success; audit сообщил 0 уязвимостей в production dependencies. Тест запускает реальный Express test server, проверяет HTTP-ответ от error middleware и выполняется с `SBP_ENABLED=true`. Последующие изменения этого файла/отчёта являются только документацией и не меняют код приложения, тесты или lockfile. Run #114 сначала ждал health status PostgreSQL `healthy`, но затем успешно завершился; ошибки на `Initialize containers` не зафиксировано.
 
 ## Конфигурация
 
