@@ -1,13 +1,13 @@
 # Security audit report — ZAVAEBATEL UC
 
 **Reviewed branch:** `security/audit-safe-storefront`  
-**Current branch head at report update:** `e640a8ef51ab994c460089c5a2ed8002637b9b45`  
-**Last confirmed successful CI:** [GitHub Actions run #98](https://github.com/Beak67/zavaebatel-uc/actions/runs/38693525905), on earlier commit `25ba68a8e301f152487504ef5b1870d7ca36cd16`. The current head adds async route error forwarding and a regression test; a separate successful CI result for that newer code has not yet been confirmed.  
+**CI run #114:** [GitHub Actions run #114](https://github.com/Beak67/zavaebatel-uc/actions/runs/38694541262) passed on the PR merge ref containing branch head `317011b111d8be11defc67fb9adebe0e1b5402dc`. Its dependency install, syntax checks, tests and production-dependency audit all succeeded.  
+**Follow-up test changes after run #114:** the async error regression test now starts a real Express server and asserts the HTTP response from error middleware; the test process sets `SBP_ENABLED=true` to exercise the business-operation guards with that flag enabled. These follow-up code changes require a new CI run; run #114 does not verify them.  
 **Scope limitation:** this is a repository/code review plus CI evidence, not a production penetration test or a certification of production readiness.
 
 ## Executive summary
 
-The current branch intentionally runs in a safe, non-transactional mode. Order creation, receipt upload, payment instructions, order-state changes, payment confirmation and UC fulfillment are disabled in code and return HTTP 503 (payment info explicitly says disabled). CI passed dependency installation, JavaScript syntax checks, tests and the production-dependency audit command. No production deployment, production database access/mutation, real payment, receipt upload, Nexus order or UC fulfillment was performed.
+The current branch intentionally runs in a safe, non-transactional mode. Order creation, receipt upload, payment instructions, order-state changes, payment confirmation and UC fulfillment are disabled in code and return HTTP 503 (payment info explicitly says disabled), independent of `SBP_ENABLED=true`. Run #114 passed the listed checks on its tested merge ref, but it predates the follow-up regression-test changes described above. A new run must confirm those changes. No production deployment, production database access/mutation, real payment, receipt upload, Nexus order or UC fulfillment was performed.
 
 **Recommendation:** eligible for human final review of the branch; **not production-ready**. Keep business operations disabled.
 
@@ -52,22 +52,24 @@ The current branch intentionally runs in a safe, non-transactional mode. Order c
 - **Not verified:** actual Nexus API contract, token permissions, upstream response behavior or production price correctness. CI uses stubs and does not contact Nexus.
 
 ### Dependencies, configuration and secrets
-- `package-lock.json` is present with lockfile version 3. The latest CI run successfully executed `npm ci`.
-- The workflow successfully ran `npm audit --omit=dev`. This checks production dependencies known to npm at run time; it does not prove that the entire application has no vulnerabilities, and it does not audit development dependencies.
+- `package-lock.json` is present with lockfile version 3. Run #114 successfully executed `npm ci` on the tested merge ref; the lockfile and test changes committed afterward require the new CI run for confirmation.
+- Run #114 successfully ran `npm audit --omit=dev` on the tested merge ref. This checks production dependencies known to npm at run time; it does not prove that the entire application has no vulnerabilities, and it does not audit development dependencies.
 - `.env.example` contains empty placeholders, not live credentials. No production environment variables were accessed.
 - **Not verified:** independent secret scanning of all Git history, private Render configuration, token rotation status or dependencies against advisories published after the CI run.
 
 ## Verification evidence
 
-Run #98: [https://github.com/Beak67/zavaebatel-uc/actions/runs/38693525905](https://github.com/Beak67/zavaebatel-uc/actions/runs/38693525905)
+Run #114: [https://github.com/Beak67/zavaebatel-uc/actions/runs/38694541262](https://github.com/Beak67/zavaebatel-uc/actions/runs/38694541262)
 
-All workflow steps completed successfully:
-1. `npm ci`
-2. `node --check server.js && node --check public/admin.js && node --check public/storefront.js`
-3. `npm test` (Node test runner; smoke tests and PostgreSQL-backed integration tests against an ephemeral PostgreSQL 16 service)
-4. `npm audit --omit=dev`
+The run completed successfully for the PR merge ref containing branch head `317011b111d8be11defc67fb9adebe0e1b5402dc`:
+1. `npm ci` — success
+2. `node --check server.js && node --check public/admin.js && node --check public/storefront.js` — success
+3. `npm test` — success (Node test runner; smoke tests and PostgreSQL-backed integration tests against an ephemeral PostgreSQL 16 service)
+4. `npm audit --omit=dev` — success
 
-The test workflow uses test-only PostgreSQL credentials and does not connect to production. Local execution was not needed for the above reported result; the result is from GitHub Actions.
+The log shows the PostgreSQL service health check initially reported `starting`, then `healthy`; the workflow proceeded. There is no logged failure at `Initialize containers` in this completed run. This is consistent with a temporary service-startup wait, not a confirmed workflow or application defect.
+
+**Not yet covered by run #114:** subsequent commits strengthen the async error test to exercise actual Express error middleware over HTTP and set `SBP_ENABLED=true` in the smoke-test process. A fresh CI run is required to verify those changes. The workflow uses test-only PostgreSQL credentials and does not connect to production.
 
 ## Remaining blockers before production
 
