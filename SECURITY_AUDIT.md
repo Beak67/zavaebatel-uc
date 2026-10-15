@@ -1,12 +1,12 @@
 # Security audit report — ZAVAEBATEL UC
 
 **Reviewed branch:** `security/audit-safe-storefront`  
-**Latest successful CI for application/test code:** [Run #124](https://github.com/Beak67/zavaebatel-uc/actions/runs/38695030162) passed on branch HEAD `68368ec4b0a3f2413bd2a44ce0ee643fe5e2adf6`. `npm ci`, syntax checks, `npm test` (17/17), and `npm audit --omit=dev` succeeded; npm reported 0 vulnerabilities in production dependencies. The regression test runs a real Express test server, asserts the HTTP response from the Express error middleware, and the smoke test process sets `SBP_ENABLED=true`. Subsequent README/audit-report commits are documentation-only; application code, tests and lockfile have not changed.  
+**Latest successful CI for application/test code:** [Run #131](https://github.com/Beak67/zavaebatel-uc/actions/runs/38695300547) passed on branch HEAD `04c8b02ed20fd38385705558104f3f8723c64255`. `npm ci`, syntax checks, `npm test` (17/17), and `npm audit --omit=dev` succeeded; npm reported 0 vulnerabilities in production dependencies. The regression test runs a real Express test server, asserts the HTTP response from the Express error middleware, and both smoke and authenticated-admin integration tests set `SBP_ENABLED=true`. Subsequent README/audit-report commits are documentation-only; application code, tests and lockfile have not changed.  
 **Scope limitation:** this is a repository/code review plus CI evidence, not a production penetration test or a certification of production readiness.
 
 ## Executive summary
 
-The current branch intentionally runs in a safe, non-transactional mode. Order creation, receipt upload, payment instructions, order-state changes, payment confirmation and UC fulfillment are disabled in code and return HTTP 503 (payment info explicitly says disabled), independent of `SBP_ENABLED=true`. Run #124 passed the application and test code checks described above. No production deployment, production database access/mutation, real payment, receipt upload, Nexus order or UC fulfillment was performed.
+The current branch intentionally runs in a safe, non-transactional mode. Order creation, receipt upload, payment instructions, order-state changes, payment confirmation and UC fulfillment are disabled in code and return HTTP 503 (payment info explicitly says disabled), independent of `SBP_ENABLED=true`. Run #131 passed the application and test code checks described above. No production deployment, production database access/mutation, real payment, receipt upload, Nexus order or UC fulfillment was performed.
 
 **Recommendation:** eligible for human final review of the branch; **not production-ready**. Keep business operations disabled.
 
@@ -51,22 +51,22 @@ The current branch intentionally runs in a safe, non-transactional mode. Order c
 - **Not verified:** actual Nexus API contract, token permissions, upstream response behavior or production price correctness. CI uses stubs and does not contact Nexus.
 
 ### Dependencies, configuration and secrets
-- `package-lock.json` is present with lockfile version 3. Run #124 successfully executed `npm ci` against this lockfile.
-- Run #124 successfully ran `npm audit --omit=dev` and reported 0 vulnerabilities in production dependencies. This checks production dependencies known to npm at run time; it does not prove that the entire application has no vulnerabilities, and it does not audit development dependencies.
+- `package-lock.json` is present with lockfile version 3. Run #131 successfully executed `npm ci` against this lockfile.
+- Run #131 successfully ran `npm audit --omit=dev` and reported 0 vulnerabilities in production dependencies. This checks production dependencies known to npm at run time; it does not prove that the entire application has no vulnerabilities, and it does not audit development dependencies.
 - `.env.example` contains empty placeholders, not live credentials. No production environment variables were accessed.
 - **Not verified:** independent secret scanning of all Git history, private Render configuration, token rotation status or dependencies against advisories published after the CI run.
 
 ## Verification evidence
 
-Run #124: [https://github.com/Beak67/zavaebatel-uc/actions/runs/38695030162](https://github.com/Beak67/zavaebatel-uc/actions/runs/38695030162)
+Run #131: [https://github.com/Beak67/zavaebatel-uc/actions/runs/38695300547](https://github.com/Beak67/zavaebatel-uc/actions/runs/38695300547)
 
-All relevant workflow steps completed successfully on branch HEAD `68368ec4b0a3f2413bd2a44ce0ee643fe5e2adf6`:
+All relevant workflow steps completed successfully on branch HEAD `04c8b02ed20fd38385705558104f3f8723c64255`:
 1. `npm ci` — success; lockfile v3 accepted
 2. `node --check server.js && node --check public/admin.js && node --check public/storefront.js` — success
 3. `npm test` — success, 17 tests passed and 0 failed; PostgreSQL-backed integration tests use an ephemeral PostgreSQL 16 service
 4. `npm audit --omit=dev` — success; 0 vulnerabilities reported in production dependencies
 
-The async error regression test starts a real Express test server, invokes a route wrapped by `asyncHandler` that rejects, and asserts that the Express error middleware receives the error and returns the expected HTTP 500 JSON response. The smoke-test process sets `SBP_ENABLED=true`, and safe-mode route tests confirm order creation and receipt upload return 503 and payment info remains disabled; the admin state-change/fulfillment route is also an unconditional 503 guard.
+The async error regression test starts a real Express test server, invokes a route wrapped by `asyncHandler` that rejects, and asserts that the Express error middleware receives the error and returns the expected HTTP 500 JSON response. Both smoke and authenticated-admin integration tests set `SBP_ENABLED=true`; safe-mode route tests confirm order creation and receipt upload return 503 and payment info remains disabled, and the authenticated fulfillment route returns 503.
 
 For run #114, logs show the PostgreSQL service health check changed from `starting` to `healthy` and the job continued. The completed logs do not record an `Initialize containers` failure; the earlier apparent stall was a service-readiness wait, not a confirmed workflow or application defect. All workflow tests use test-only PostgreSQL and do not connect to production.
 
