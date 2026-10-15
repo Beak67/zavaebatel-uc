@@ -1,89 +1,128 @@
-# Security audit report — ZAVAEBATEL UC
+# Production-readiness / security audit — ZAVAEBATEL UC
 
-**Reviewed branch:** `security/audit-safe-storefront`  
-**Successful CI evidence for application/test code:** [Run #149](https://github.com/Beak67/zavaebatel-uc/actions/runs/38695871122) passed on branch HEAD `a565c96220febba50cdeb96531c34f5b88b43115`. `npm ci`, syntax checks, `npm test` (17/17), and `npm audit --omit=dev` succeeded; npm reported 0 vulnerabilities in production dependencies. The regression test runs a real Express test server, asserts the HTTP response from the Express error middleware, and both smoke and authenticated-admin integration tests set `SBP_ENABLED=true`. Subsequent README/audit-report commits are documentation-only; application code, tests and lockfile have not changed.  
-**Scope limitation:** this is a repository/code review plus CI evidence, not a production penetration test or a certification of production readiness.
+**Scope:** repository review and safe CI tests on \`security/audit-safe-storefront\`. No production deployment, production configuration change, production database connection, real order/payment/receipt upload, or UC fulfillment was performed.
 
-## Executive summary
+**Tested application/test revision:** \`dcdec4de4959a2834a0aa7e1aa07aa64bb873371\`  
+**CI evidence:** [Run #169](https://github.com/Beak67/zavaebatel-uc/actions/runs/38697515235) — successful. It ran \`npm ci\`, syntax checks, \`npm test\` (20 passed, 0 failed, 0 skipped), and \`npm audit --omit=dev\` (0 production dependency vulnerabilities reported). Later commits, if any, that only update this report/README do not change the tested application or test code.
 
-The current branch intentionally runs in a safe, non-transactional mode. Order creation, receipt upload, payment instructions, order-state changes, payment confirmation and UC fulfillment are disabled in code and return HTTP 503 (payment info explicitly says disabled), independent of `SBP_ENABLED=true`. Run #149 passed the application and test code checks described above. No production deployment, production database access/mutation, real payment, receipt upload, Nexus order or UC fulfillment was performed.
+## Decision
 
-**Recommendation:** eligible for human final review of the branch; **not production-ready**. Keep business operations disabled.
+**NOT PRODUCTION-READY. Do not merge/deploy on the basis of CI alone. Keep orders, payment instructions, receipt uploads, payment confirmation and UC fulfillment disabled.** The repository tests support the safe-mode behavior; critical facts about Render, production PostgreSQL, backups/restores and Nexus credentials/contract remain unverified.
 
-## Review findings and current controls
+Status definitions: **PASS** means supported by the named code review/test/evidence; **FAIL** means a concrete issue is present; **NOT VERIFIED** means external access, a production-like isolated environment or additional evidence is required. PASS does not certify production.
 
-### Administrative authorization
-- Admin API routes require configuration and a PostgreSQL-backed session; protected data routes also require `isAdmin === true`.
-- Login compares passwords using `crypto.timingSafeEqual` through a length-checked helper and regenerates the session ID on success.
-- Login is rate-limited. Admin write routes require both an authenticated session and a CSRF token.
-- Admin state-changing/fulfillment endpoint is a deliberate 503 guard, including for authenticated sessions.
-- Integration test covers unauthenticated access, wrong Origin, incorrect password, successful test login, cookie attributes, CSRF rejection, logout and disabled fulfillment.
-- **Not verified:** actual production admin credentials, domain-level login, operational account recovery or a second factor. The app currently has a single shared admin password, not a user/role management system.
+## 1. Render, HTTPS, proxy and sessions
 
-### SQL and PostgreSQL
-- Queries that include request-controlled identifiers use PostgreSQL parameters (`$1`, `$2`); order IDs are format-validated before lookup.
-- Database schema verification is fail-closed. Session store table auto-creation is disabled by default; schema initialization is an explicit opt-in.
-- Migration is additive and does not drop tables, truncate data or rewrite order status.
-- Remote PostgreSQL TLS uses certificate verification (`rejectUnauthorized: true`).
-- **Not verified:** production schema compatibility, database role least privilege, backup/restore, migration execution against existing data or operational availability.
+| Status | Check and evidence |
+|---|---|
+| PASS | \`server.js\`: Express trusts forwarded headers only when \`TRUST_PROXY_HOPS\` parses as an integer from 1 through 5; production admin routes fail closed if it is absent/invalid. This is a guard, not proof that the configured hop count is correct. |
+| PASS | \`server.js\`: session cookie uses \`HttpOnly\`, \`SameSite=Strict\`, \`Secure\` when \`NODE_ENV=production\`, path \`/\`, four-hour \`maxAge\`, and no rolling refresh. Login regenerates the session ID and saves the new session. \`tests/session.integration.test.js\` checks cookie attributes, login and logout against the test PostgreSQL service. |
+| PASS | Login is rate-limited (8 attempts per 15 minutes by the configured rate limiter); order and receipt endpoints also have limits. Login requires an Origin matching the request Host; admin mutation routes require a session CSRF token. Evidence: \`server.js\`, authenticated integration test. |
+| PASS | Security headers/CSP are configured with Helmet in \`server.js\`; \`tests/smoke.test.js\` checks CSP script restrictions and that project files outside \`public/\` are not served as static assets. |
+| NOT VERIFIED | Render's actual proxy chain, TLS termination, domain/custom-domain settings, runtime Node version, build/start commands, environment-variable presence and whether the live service runs this branch. Verify in Render Dashboard before any deployment. Do not infer these values from \`.env.example\`. |
+| NOT VERIFIED | Real-browser cookie behavior and rate-limit client-IP attribution through the actual Render proxy chain. \`express-rate-limit\` uses its default per-process store here; if multiple instances are used, limits are not a shared global counter. Confirm instance topology or adopt a shared store before relying on a global attempt limit. |
+| NOT VERIFIED | Canonical production-origin policy. Code compares Origin's host to the incoming Host; it does not pin a separately configured canonical origin. Confirm the deployed host/proxy behavior and consider an explicit canonical-origin allowlist if the topology warrants it. |
+| NOT VERIFIED | Admin credential lifecycle, recovery, rotation procedure and MFA. Current code uses a single configured admin password; CI does not verify production account operations or MFA. |
 
-### Sessions, cookies, CSRF and headers
-- No `express-session` MemoryStore fallback; the PostgreSQL store is required.
-- Session cookie is `HttpOnly`, `SameSite=Strict`, `Secure` in production, with a four-hour maximum age and no rolling refresh.
-- Login checks Origin against Host; admin mutations require a per-session CSRF token.
-- Helmet CSP has `script-src 'self'`, `object-src 'none'`, `frame-ancestors 'none'`, `base-uri 'self'` and `form-action 'self'`; inline scripts are not permitted. Inline styles are permitted by the current `style-src` directive for the embedded page styles.
-- **Residual concern:** Origin-vs-Host validation is not a substitute for validating the externally configured canonical origin. Confirm that the production host/proxy configuration is correct and test the exact deployed behavior.
+## 2. PostgreSQL, schema and migrations
 
-### Reverse proxy and HTTPS
-- Express trusts forwarded headers only when a valid `TRUST_PROXY_HOPS` value from 1 through 5 is configured; production admin routes fail closed if it is not.
-- The template value `1` is only a proposed value and has not been validated against Render's actual proxy topology. Wrong hop counts can affect IP-based rate limiting and secure-cookie behavior.
-- **Owner action required:** verify the service's actual trusted proxy chain and HTTPS termination in Render before any deployment.
+| Status | Check and evidence |
+|---|---|
+| PASS | Request-controlled identifiers in reviewed queries use PostgreSQL parameters (\`$1\`, \`$2\`) and order UUIDs are validated before lookup. Evidence: \`server.js\`. |
+| PASS | Remote PostgreSQL connections enable certificate verification (\`rejectUnauthorized: true\`); connection query parameters that could override SSL settings are stripped before constructing the pool. Evidence: \`server.js\`. This does not verify the real production connection configuration or CA chain. |
+| PASS | \`migrations/001_session_store_and_safe_admin.sql\` uses a transaction, \`IF NOT EXISTS\` table/index creation and additive \`ADD COLUMN IF NOT EXISTS\`; it does not drop/truncate tables or rewrite order statuses. The test \`PostgreSQL migration is executable and idempotent on the isolated test database\` runs it twice against CI PostgreSQL 16 and checks the expected tables/indexes. |
+| PASS | Schema readiness now checks required columns via \`information_schema.columns\`, not only table names. \`tests/smoke.test.js\` tests complete, missing-column and missing-schema cases using the extracted validator; the PostgreSQL integration test also provisions and exercises the expected schema. |
+| PASS | \`DB_AUTO_INIT\` defaults to the verification path; initialization is opt-in. Session store table auto-creation by \`connect-pg-simple\` is disabled. Evidence: \`server.js\`, \`.env.example\`. |
+| NOT VERIFIED | Production schema, existing data compatibility, constraints/indexes on the real database, migration scheduling/ownership, connection pool sizing and the privileges actually granted to the production database role. No production DB connection or migration was attempted. |
+| NOT VERIFIED | Least-privilege grants. The repository does not establish what privileges the configured Render database role has; confirm using an approved read-only privilege review or a cloned environment. |
+| NOT VERIFIED | Backup and restore. No accessible backup, restore target or restore evidence was provided; no restore is claimed. |
+| NOT VERIFIED | SQL injection resistance is supported by inspection of reviewed parameterized queries, not by a dedicated adversarial penetration test. Keep parameterization mandatory for future queries. |
 
-### Static files, routing and errors
-- Static middleware serves only `public/`; `/admin` is an explicit route for the root-level `admin.html`. Smoke tests verify expected public assets work and root project files such as `server.js`, `package.json`, `.env`, README and `admin.html` are not served as arbitrary static paths.
-- Unknown API and page routes return controlled 404 responses. Error middleware emits generic client-facing errors and logs error type/code rather than request secrets or database connection strings.
-- JSON body size is limited; Helmet security headers and no-cache behavior are used for sensitive admin data.
-- **Residual concern:** audit logs are not yet an implemented, append-only trail for attempted admin actions; the `admin_audit` table exists in the schema but safe-mode actions are rejected before being recorded. Do not treat it as a complete operational audit facility.
+### Backup/restore drill — safe plan, not yet performed
 
-### Nexus and catalog handling
-- Catalog product IDs are restricted to PUBG Mobile UC IDs; prices are validated as finite positive numbers before server-side calculation.
-- Supplier retries are bounded; malformed JSON and non-success responses are handled. Authorization values are not intentionally included in logs or client responses.
-- **Not verified:** actual Nexus API contract, token permissions, upstream response behavior or production price correctness. CI uses stubs and does not contact Nexus.
+1. In the hosting/database control plane, identify the configured backup source, retention policy, latest successful backup timestamp and point-in-time recovery window (if offered). Record metadata only; do not copy credentials or customer data into the audit.
+2. Obtain explicit owner approval and a backup artifact/snapshot intended for testing. Provision a **new isolated PostgreSQL instance/database**, separate credentials and network access; do not reuse the production URL.
+3. Before restore, validate the target endpoint and database name against an allowlist and ensure the restore job cannot resolve to production. Restore only into the isolated target.
+4. Run schema checks and read-only invariants: expected tables/columns/indexes, row counts by non-sensitive categories, uniqueness of public order IDs, status values and timestamps. Compare with source backup metadata; avoid printing personal/player identifiers, receipts or secrets.
+5. Capture duration, errors, schema/version, backup age and the validation outcome. Destroy or retain the restored copy according to the approved data-retention policy.
+6. A real recovery requires owner approval, a declared recovery point, an incident/change ticket, an explicit target confirmation and a rollback/communications plan. No production restore, overwrite or failover should be inferred from this drill.
 
-### Dependencies, configuration and secrets
-- `package-lock.json` is present with lockfile version 3. Run #149 successfully executed `npm ci` against this lockfile.
-- Run #149 successfully ran `npm audit --omit=dev` and reported 0 vulnerabilities in production dependencies. This checks production dependencies known to npm at run time; it does not prove that the entire application has no vulnerabilities, and it does not audit development dependencies.
-- `.env.example` contains empty placeholders, not live credentials. No production environment variables were accessed.
-- **Not verified:** independent secret scanning of all Git history, private Render configuration, token rotation status or dependencies against advisories published after the CI run.
+**Current restore status: NOT VERIFIED** — no backup artifact, isolated restore target or successful restore log was available during this audit.
 
-## Verification evidence
+## 3. Nexus, catalog and pricing
 
-Run #149: [https://github.com/Beak67/zavaebatel-uc/actions/runs/38695871122](https://github.com/Beak67/zavaebatel-uc/actions/runs/38695871122)
+| Status | Check and evidence |
+|---|---|
+| PASS | The server obtains catalog data server-side; client-supplied prices are not used to create an order because order creation is disabled. Product IDs are restricted to the \`pubg-mobile:uc:<digits>\` shape, and supplier prices must be finite and positive before server-side retail calculation. Evidence: \`normalizeProducts\`, \`retailPrice\` in \`server.js\`, mock-based tests in \`tests/smoke.test.js\`. |
+| PASS | Nexus requests have an eight-second timeout, bounded retry behavior and generic handling of network/upstream failures. Logs record timing/status/error type/count, not the Authorization header. Tests stub \`fetch\` and check malformed responses, HTTP errors and retry bounds. |
+| PASS | Current fulfillment endpoint is a server-side HTTP 503 guard for every administrative action, including an authenticated admin with \`SBP_ENABLED=true\`. No fulfillment request was sent to Nexus. |
+| NOT VERIFIED | Actual Nexus API contract, authentication scheme, token scope/permissions, sandbox availability, upstream idempotency semantics, price currency, live price accuracy, supplier SKU mapping and operational rate limits. No real Nexus credentials were used. |
+| NOT VERIFIED | Protection against duplicate fulfillment for a future enabled implementation. It is not exercised because fulfillment is deliberately disabled; before any enablement, require server-side idempotency keys/order state transitions, retry/reconciliation semantics and tests against a confirmed sandbox. |
+| NOT VERIFIED | Commercial price correctness. Formula and input validation are unit-tested, but FX value, markup, supplier currency and product mapping require owner-approved business rules and independent price reconciliation. |
 
-All relevant workflow steps completed successfully on branch HEAD `a565c96220febba50cdeb96531c34f5b88b43115`:
-1. `npm ci` — success; lockfile v3 accepted
-2. `node --check server.js && node --check public/admin.js && node --check public/storefront.js` — success
-3. `npm test` — success, 17 tests passed and 0 failed; PostgreSQL-backed integration tests use an ephemeral PostgreSQL 16 service
-4. `npm audit --omit=dev` — success; 0 vulnerabilities reported in production dependencies
+Secrets are not intentionally returned by catalog/API handlers or embedded in client assets; the tests check known test markers and client responses. This is not a complete scan of Git history or private Render configuration. Secret-history scanning and credential rotation status remain **NOT VERIFIED**.
 
-The async error regression test starts a real Express test server, invokes a route wrapped by `asyncHandler` that rejects, and asserts that the Express error middleware receives the error and returns the expected HTTP 500 JSON response. Both smoke and authenticated-admin integration tests set `SBP_ENABLED=true`; safe-mode route tests confirm order creation and receipt upload return 503 and payment info remains disabled, and the authenticated fulfillment route returns 503.
+## 4. Safe-mode enforcement
 
-For run #114, logs show the PostgreSQL service health check changed from `starting` to `healthy` and the job continued. The completed logs do not record an `Initialize containers` failure; the earlier apparent stall was a service-readiness wait, not a confirmed workflow or application defect. All workflow tests use test-only PostgreSQL and do not connect to production.
+**PASS — current routes remain disabled server-side even with \`SBP_ENABLED=true\`.**
 
-## Remaining blockers before production
+Evidence:
+- \`tests/smoke.test.js\`: sets \`SBP_ENABLED=true\`; checks order creation and receipt upload return HTTP 503, payment info remains disabled, the health route does not report an unconfigured database as healthy, and API responses do not expose known test credentials.
+- \`tests/session.integration.test.js\`: runs with \`SBP_ENABLED=true\`; checks authenticated admin actions (\`fulfill\`, payment/status-like actions) return HTTP 503, payment instructions remain disabled, order creation/receipt upload remain blocked, CSRF checks work and logout invalidates the session.
+- \`server.js\`: routes return 503 before any order/payment/receipt/fulfillment side effect; there is no live fulfillment implementation in these paths.
 
-1. Owner confirms Render runtime version, build/start commands, environment variables and actual proxy hop count.
-2. Owner validates database schema/migration on a non-production copy, confirms least-privilege DB role, backup and restore procedure.
-3. Owner performs a separate controlled deployment and validates TLS, cookies, admin login, rate limiting, headers and health checks in the real hosting topology.
-4. Owner reviews Nexus credentials/permissions and upstream contract without exposing credentials.
-5. Keep orders, payments, receipt uploads and fulfillment disabled until a separately scoped implementation and threat review has explicit approval, test coverage, refund/privacy/legal review and a safe staging test plan.
-6. Conduct a human review of this PR and its full diff. CI success alone is not a merge/deploy authorization.
+The test DB guard in \`tests/session.integration.test.js\` rejects non-loopback hosts and database names not ending in \`_test\` **before spawning the integration server**. CI uses a local ephemeral PostgreSQL 16 service. This is an accidental-misconfiguration guard, not a defense against a deliberately configured local tunnel to production; do not use tunnels or production connection strings for tests.
 
-## Actions explicitly not performed
+## 5. Findings by priority
 
-- No merge; PR remains open.
-- No change directly to `main`.
-- No production deployment or Render configuration change.
-- No production database connection or destructive operation.
-- No real orders, payments, receipt uploads, Nexus order requests or UC fulfillment.
-- No production secrets/tokens/passwords were printed or copied into this report.
+### High — blocks production approval
+
+1. **Render topology and HTTPS are unverified.** Confirm the real proxy hop count, TLS termination, forwarded protocol behavior, service settings and live code revision in Render. Evidence currently available: repository code and CI only.
+2. **Production DB access model and recovery are unverified.** Confirm least-privilege grants, schema compatibility, backup freshness, restore process and a successful isolated restore before deployment.
+3. **Nexus contract, permissions and prices are unverified.** Obtain owner-approved sandbox/test credentials and documented API/price semantics. Do not use production credentials for this audit.
+4. **Real fulfillment must remain disabled.** There is no demonstrated idempotency/reconciliation path for future fulfillment; do not enable business operations until a separately reviewed design and sandbox tests exist.
+
+### Medium — resolve or explicitly accept before launch
+
+1. **Shared admin credential / no demonstrated MFA.** Validate credential rotation, recovery and access policy; add individual admin identities/MFA if required by the threat model.
+2. **Rate limits are per process with the default store.** Confirm the deployment has a single instance or use a shared store if cross-instance enforcement is required.
+3. **Admin audit trail is incomplete.** The \`admin_audit\` table is provisioned, but rejected safe-mode operations are not written to an append-only audit trail. Do not treat this table as an operational audit system.
+4. **Origin policy depends on incoming Host.** Validate against the actual public hostname and proxy behavior; consider an explicit canonical-origin allowlist.
+
+No critical defect was found that enables real transactions in the current code paths; that is not equivalent to a clean bill of health for production.
+
+## 6. Changed files in this audit
+
+- \`server.js\` — schema readiness validates required columns and fails closed for incompatible schemas.
+- \`tests/smoke.test.js\` — tests complete/missing-column schema validation.
+- \`tests/session.integration.test.js\` — refuses non-loopback/non-\`_test\` DB targets; tests safe-mode admin actions with \`SBP_ENABLED=true\`; executes the SQL migration twice on isolated CI PostgreSQL.
+- \`SECURITY_AUDIT.md\` — this evidence-based status report.
+- \`README.md\`, \`README_RU.md\` — current test evidence and external blockers.
+
+No changes to \`main\`, no merge, no deployment, no production environment changes, no production DB access/mutation and no real business operations were performed.
+
+## 7. Tests and actual results
+
+**CI run #169:** [https://github.com/Beak67/zavaebatel-uc/actions/runs/38697515235](https://github.com/Beak67/zavaebatel-uc/actions/runs/38697515235) — completed successfully on tested code/test revision \`dcdec4de4959a2834a0aa7e1aa07aa64bb873371\`.
+
+| Command | Actual result |
+|---|---|
+| \`npm ci\` | PASS |
+| \`node --check server.js && node --check public/admin.js && node --check public/storefront.js\` | PASS |
+| \`npm test\` | PASS — 20 tests, 20 passed, 0 failed, 0 skipped |
+| \`npm audit --omit=dev\` | PASS — 0 vulnerabilities reported in production dependencies |
+
+These commands ran in GitHub Actions, not in a local environment. The dependency audit covers production dependencies known to npm at that run; it does not prove the application is vulnerability-free or audit all development dependencies.
+
+## 8. External checks required before merge/deployment
+
+- [ ] Render owner confirms the service settings, actual proxy topology, TLS/domain configuration and current deployed revision.
+- [ ] Owner confirms production environment variable presence/quality in the dashboard without sharing secret values; verify the database URL is private and secrets are rotated/stored correctly.
+- [ ] DBA confirms production schema compatibility and least-privilege role grants using a safe read-only review.
+- [ ] Owner/DBA identifies a real backup and completes an isolated restore/invariant check.
+- [ ] Nexus owner confirms sandbox, API contract, credential scope, SKU mapping, price currency and price reconciliation.
+- [ ] Security/operations owner accepts the admin authentication, rate-limit and audit-trail design.
+- [ ] Separate design/threat review and sandbox testing are completed before any order/payment/receipt/fulfillment code is enabled.
+- [ ] Re-run CI on the final PR head and obtain human review before considering merge.
+
+Until these checks are evidenced, the release decision remains **NOT PRODUCTION-READY**.
