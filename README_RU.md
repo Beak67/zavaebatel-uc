@@ -29,13 +29,9 @@
 
 ## Проверки CI
 
-Последний полностью успешный CI-run — #98 на commit `25ba68a8e301f152487504ef5b1870d7ca36cd16`: [GitHub Actions run #98](https://github.com/Beak67/zavaebatel-uc/actions/runs/38693525905). После этого commit добавлены общий async error wrapper и регрессионный тест; текущий branch head — `e640a8ef51ab994c460089c5a2ed8002637b9b45`. Отдельный CI-run для последующих изменений пока не подтверждён. Поэтому успешный run #98 не доказывает прохождение тестов на текущем HEAD. Результаты run #98:
-- `npm ci`;
-- `node --check server.js && node --check public/admin.js && node --check public/storefront.js`;
-- `npm test` (включая smoke tests и интеграционные тесты с эфемерным PostgreSQL 16);
-- `npm audit --omit=dev`.
+Run [#114](https://github.com/Beak67/zavaebatel-uc/actions/runs/38694541262) завершился успешно на PR merge ref, содержащем branch head `317011b111d8be11defc67fb9adebe0e1b5402dc`. В нём прошли `npm ci`, `node --check server.js && node --check public/admin.js && node --check public/storefront.js`, `npm test` и `npm audit --omit=dev`. Логи показывают обычное ожидание готовности тестового PostgreSQL: health status сменился с `starting` на `healthy`, после чего шаги продолжились; ошибки на `Initialize containers` не зафиксировано.
 
-Lockfile `package-lock.json` версии 3 включён в репозиторий; успешный `npm ci` в run #98 подтверждает, что установка зависимостей с ним прошла в CI. Это не утверждение об отсутствии всех возможных уязвимостей или об исправности production.
+После run #114 тест async route handler был усилен: теперь он проверяет реальный HTTP-ответ от Express error middleware, а тестовый процесс устанавливает `SBP_ENABLED=true`, чтобы проверять защитные ограничения именно при включённом флаге. Поэтому run #114 **не подтверждает** эти более поздние изменения; для них требуется новый CI-run. `package-lock.json` использует lockfile v3. Успешная установка в run #114 относится к версии lockfile на протестированном commit, а не является гарантией отсутствия всех уязвимостей или безопасности production.
 
 Подробности, покрытие и ограничения описаны в [SECURITY_AUDIT.md](SECURITY_AUDIT.md).
 
