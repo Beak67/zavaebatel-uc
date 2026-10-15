@@ -96,7 +96,13 @@ test('Render routes, public assets, missing files and disabled sales', async () 
     assert.equal((await fetch(url + '/admin')).status, 200);
     assert.equal((await fetch(url + '/definitely-missing-static-file.js')).status, 404);
     const health = await fetch(url + '/api/health');
+    assert.equal(health.status, 503, 'an unconfigured database must not be reported healthy');
     assert.match(health.headers.get('content-type'), /application\/json/);
+    const healthBody = await health.json();
+    assert.equal(healthBody.ok, false);
+    assert.equal(healthBody.database, 'not_configured');
+    assert.equal(healthBody.ordersEnabled, false);
+    assert.doesNotMatch(JSON.stringify(healthBody), /test-token|test-shop|Authorization/i);
     const catalog = await fetch(url + '/api/catalog');
     assert.ok([502, 503].includes(catalog.status));
     const catalogBody = await catalog.json();
