@@ -29,9 +29,9 @@
 
 ## Проверки CI
 
-Run [#114](https://github.com/Beak67/zavaebatel-uc/actions/runs/38694541262) завершился успешно на PR merge ref, содержащем branch head `317011b111d8be11defc67fb9adebe0e1b5402dc`. В нём прошли `npm ci`, `node --check server.js && node --check public/admin.js && node --check public/storefront.js`, `npm test` и `npm audit --omit=dev`. Логи показывают обычное ожидание готовности тестового PostgreSQL: health status сменился с `starting` на `healthy`, после чего шаги продолжились; ошибки на `Initialize containers` не зафиксировано.
+[Run #124](https://github.com/Beak67/zavaebatel-uc/actions/runs/38695030162) успешно проверил код приложения и тесты на branch HEAD `68368ec4b0a3f2413bd2a44ce0ee643fe5e2adf6`: `npm ci` — success; `node --check server.js && node --check public/admin.js && node --check public/storefront.js` — success; `npm test` — 17/17 тестов passed; `npm audit --omit=dev` — success, 0 vulnerabilities в production dependencies. Регрессионный тест поднимает реальный Express test server, вызывает маршрут с rejected async handler и проверяет HTTP-ответ middleware обработки ошибок. Smoke tests выполняются с `SBP_ENABLED=true`.
 
-После run #114 тест async route handler был усилен: теперь он проверяет реальный HTTP-ответ от Express error middleware, а тестовый процесс устанавливает `SBP_ENABLED=true`, чтобы проверять защитные ограничения именно при включённом флаге. Поэтому run #114 **не подтверждает** эти более поздние изменения; для них требуется новый CI-run. `package-lock.json` использует lockfile v3. Успешная установка в run #114 относится к версии lockfile на протестированном commit, а не является гарантией отсутствия всех уязвимостей или безопасности production.
+Изменения README и этого аудиторского отчёта после указанного HEAD — только документация; application code, тесты и `package-lock.json` не менялись. Run #114 первоначально ждал, пока health check тестового PostgreSQL перейдёт из `starting` в `healthy`, затем все шаги завершились успешно; ошибка на `Initialize containers` не зафиксирована. `package-lock.json` использует lockfile v3. CI не доказывает безопасность production или отсутствие всех возможных уязвимостей.
 
 Подробности, покрытие и ограничения описаны в [SECURITY_AUDIT.md](SECURITY_AUDIT.md).
 
