@@ -171,6 +171,8 @@ export async function getCatalog() {
 async function requireDb(_req,res,next) {
   await dbReady;
   if (!pool) return res.status(503).json({ error:'PostgreSQL не настроен: задайте DATABASE_URL.' });
+  if (process.env.NODE_ENV === 'production' && !(Number.isInteger(trustProxyHops) && trustProxyHops >= 1 && trustProxyHops <= 5))
+    return res.status(503).json({ error:'Администрирование отключено: задайте TRUST_PROXY_HOPS согласно доверенной proxy-топологии Render.' });
   if (!sessionConfigured) return res.status(503).json({ error:'Администрирование отключено: задайте DATABASE_URL и SESSION_SECRET длиной не менее 32 символов.' });
   if (dbError) return res.status(503).json({ error:'PostgreSQL недоступен или схема не инициализирована.' });
   if (!process.env.ADMIN_PASSWORD || process.env.ADMIN_PASSWORD.length < 20)
