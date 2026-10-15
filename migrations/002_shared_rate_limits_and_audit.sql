@@ -34,6 +34,17 @@ ALTER TABLE admin_audit ADD COLUMN IF NOT EXISTS reason_code TEXT;
 ALTER TABLE admin_audit ADD COLUMN IF NOT EXISTS target_type TEXT;
 ALTER TABLE admin_audit ADD COLUMN IF NOT EXISTS target_id TEXT;
 ALTER TABLE admin_audit ADD COLUMN IF NOT EXISTS session_hash TEXT;
+-- Normalize legacy nullable values before enforcing the required structured fields.
+UPDATE admin_audit SET
+  action = COALESCE(action, 'legacy_event'),
+  result = COALESCE(result, 'unknown'),
+  admin_identity = COALESCE(admin_identity, 'anonymous'),
+  created_at = COALESCE(created_at, NOW()),
+  operation_type = COALESCE(operation_type, action, 'legacy_event');
+ALTER TABLE admin_audit ALTER COLUMN action SET NOT NULL;
+ALTER TABLE admin_audit ALTER COLUMN result SET NOT NULL;
+ALTER TABLE admin_audit ALTER COLUMN admin_identity SET NOT NULL;
+ALTER TABLE admin_audit ALTER COLUMN created_at SET NOT NULL;
 ALTER TABLE admin_audit ALTER COLUMN order_public_id DROP NOT NULL;
 
 COMMIT;
