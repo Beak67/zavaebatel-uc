@@ -11,6 +11,7 @@
 - Статические файлы обслуживаются из `public/`; `/admin` — отдельная явно заданная страница `admin.html`. Корневые файлы вроде `server.js`, `package.json`, `.env` и README не доступны через static middleware.
 - Helmet устанавливает security headers; CSP ограничивает скрипты `'self'`, а inline script не разрешён.
 - SQL-запросы с пользовательскими значениями используют параметры PostgreSQL (`$1`, `$2`); динамический SQL из пользовательского ввода не используется.
+- Проверка готовности БД проверяет наличие обязательных столбцов, а не только таблиц; тест отдельно подтверждает fail-closed результат при отсутствующих столбцах.
 - При отсутствии PostgreSQL/схемы/секретов административные API закрываются fail-closed; fallback на MemoryStore отсутствует.
 
 ## Сессии, CSRF и proxy
@@ -29,9 +30,9 @@
 
 ## Проверки CI
 
-[Run #149](https://github.com/Beak67/zavaebatel-uc/actions/runs/38695871122) успешно проверил branch HEAD `a565c96220febba50cdeb96531c34f5b88b43115`: `npm ci` — success; `node --check server.js && node --check public/admin.js && node --check public/storefront.js` — success; `npm test` — 17/17 passed; `npm audit --omit=dev` — success, 0 vulnerabilities в production dependencies. Регрессионный тест поднимает реальный Express test server, вызывает rejected async handler и проверяет HTTP-ответ Express error middleware. Smoke tests и интеграционный тест авторизованного администратора запускаются с `SBP_ENABLED=true`; тест подтверждает, что выдача UC всё равно возвращает HTTP 503.
+[Run #169](https://github.com/Beak67/zavaebatel-uc/actions/runs/38697515235) успешно проверил код/тесты revision \`dcdec4de4959a2834a0aa7e1aa07aa64bb873371\`: \`npm ci\` — PASS; \`node --check server.js && node --check public/admin.js && node --check public/storefront.js\` — PASS; \`npm test\` — 20 passed, 0 failed, 0 skipped; \`npm audit --omit=dev\` — 0 vulnerabilities в production dependencies. Тесты проверяют блокировку бизнес-функций с \`SBP_ENABLED=true\`, выполняют миграцию дважды на изолированной CI PostgreSQL и проверяют fail-closed поведение при несовместимой схеме.
 
-Последующие изменения README и аудиторского отчёта — только документация; application code, тесты и `package-lock.json` не менялись. Run #114 сначала ждал health check тестового PostgreSQL (`starting` → `healthy`), после чего успешно завершился; ошибки на `Initialize containers` не зафиксировано. `package-lock.json` использует lockfile v3. CI не доказывает безопасность production или отсутствие всех возможных уязвимостей.
+Интеграционный тест отказывается запускаться, если \`TEST_DATABASE_URL\` не указывает на loopback/localhost и имя базы с суффиксом \`_test\`. CI использует эфемерную PostgreSQL 16. Это защита от случайной ошибки конфигурации, а не защита от вручную настроенного локального туннеля к production. Последующие изменения README/аудиторского отчёта — только документация; приложение и тесты не менялись после протестированного revision. CI не доказывает безопасность production или отсутствие всех возможных уязвимостей.
 
 Подробности, покрытие и ограничения описаны в [SECURITY_AUDIT.md](SECURITY_AUDIT.md).
 
