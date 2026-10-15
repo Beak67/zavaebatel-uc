@@ -8,6 +8,32 @@ const SECRET = 'ci-only-session-secret-not-production-0123456789';
 const ADMIN_PASSWORD = 'ci-only-admin-password-never-production';
 const TEST_DATABASE_URL = process.env.TEST_DATABASE_URL || '';
 
+function assertSafeTestDatabaseUrl(value) {
+  let parsed;
+  try { parsed = new URL(value); } catch {
+    throw new Error('Refusing integration test: TEST_DATABASE_URL must be a valid local test-database URL.');
+  }
+  const host = parsed.hostname.toLowerCase();
+  const database = decodeURIComponent(parsed.pathname.replace(/^\//, ''));
+  const localHost = ['localhost', '127.0.0.1', '::1', '[::1]', 'postgres'].includes(host);
+  if (!['postgres:', 'postgresql:'].includes(parsed.protocol) || !localHost || !database.endsWith('_test')) {
+    throw new Error('Refusing integration test: TEST_DATABASE_URL must target localhost/loopback or the CI postgres service and a database name ending in _test. No connection was attempted.');
+  }
+  return true;
+}
+
+// Fail before spawning a server or opening a database connection if the target is not clearly test-only.
+if (TEST_DATABASE_URL) assertSafeTestDatabaseUrl(TEST_DATABASE_URL);
+
+test('test database guard rejects non-local and non-test targets without connecting', () => {
+  for (const value of [
+    'postgresql://user:pass@production.example.com/app',
+    'postgresql://user:pass@127.0.0.1/app',
+    'https://127.0.0.1/zavaebatel_test'
+  ]) assert.throws(() => assertSafeTestDatabaseUrl(value), /Refusing integration test/);
+  assert.equal(assertSafeTestDatabaseUrl('postgresql://postgres:postgres@127.0.0.1:5432/zavaebatel_test'), true);
+});
+
 async function freePort() {
   const server = createServer();
   await new Promise((resolve, reject) => server.once('error', reject).listen(0, '127.0.0.1', resolve));
@@ -105,12 +131,27 @@ test('PostgreSQL-backed admin sessions, login, CSRF, logout, and safe-mode admin
     });
     assert.equal(badCsrfLogout.status, 403);
 
-    const disabledAction = await fetch(app.base + '/api/admin/orders/00000000-0000-4000-8000-000000000000/fulfill', {
-      method: 'POST',
-      headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': loginBody.csrfToken },
-      body: '{}'
+    for (const action of ['fulfill', 'approve-payment', 'mark-paid', 'cancel', 'complete']) {
+      const disabledAction = await fetch(app.base + '/api/admin/orders/00000000-0000-4000-8000-000000000000/' + action, {
+        method: 'POST',
+        headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': loginBody.csrfToken },
+        body: '{}'
+      });
+      assert.equal(disabledAction.status, 503, action + ' must remain disabled even for an authenticated administrator');
+    }
+
+    const paymentInfo = await fetch(app.base + '/api/payment-info');
+    assert.equal(paymentInfo.status, 200);
+    assert.equal((await paymentInfo.json()).enabled, false, 'payment instructions must stay disabled with SBP_ENABLED=true');
+
+    const disabledOrder = await fetch(app.base + '/api/orders', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ productId: 'pubg-mobile:uc:60', playerId: 'test-player' })
     });
-    assert.equal(disabledAction.status, 503, 'fulfillment must remain disabled even for an authenticated administrator');
+    assert.equal(disabledOrder.status, 503);
+
+    const disabledReceipt = await fetch(app.base + '/api/orders/00000000-0000-4000-8000-000000000000/receipt', { method: 'POST' });
+    assert.equal(disabledReceipt.status, 503);
 
     const logout = await fetch(app.base + '/api/admin/logout', {
       method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': loginBody.csrfToken }, body: '{}'
