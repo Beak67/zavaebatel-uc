@@ -157,11 +157,14 @@ async function initDb() {
     ALTER TABLE manual_orders ADD COLUMN IF NOT EXISTS reviewed_by TEXT;
     CREATE INDEX IF NOT EXISTS manual_orders_created_at_idx ON manual_orders(created_at DESC);
     CREATE TABLE IF NOT EXISTS admin_audit (
-      id BIGSERIAL PRIMARY KEY, order_public_id UUID, action TEXT NOT NULL, result TEXT NOT NULL,
+      id BIGSERIAL PRIMARY KEY, order_public_id UUID, action TEXT NOT NULL, operation_type TEXT NOT NULL, result TEXT NOT NULL,
       admin_identity TEXT NOT NULL DEFAULT 'anonymous', created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       request_id UUID, reason_code TEXT, target_type TEXT, target_id TEXT, session_hash TEXT
     );
     ALTER TABLE admin_audit ALTER COLUMN order_public_id DROP NOT NULL;
+    ALTER TABLE admin_audit ADD COLUMN IF NOT EXISTS operation_type TEXT;
+    UPDATE admin_audit SET operation_type = action WHERE operation_type IS NULL;
+    ALTER TABLE admin_audit ALTER COLUMN operation_type SET NOT NULL;
     ALTER TABLE admin_audit ADD COLUMN IF NOT EXISTS request_id UUID;
     ALTER TABLE admin_audit ADD COLUMN IF NOT EXISTS reason_code TEXT;
     ALTER TABLE admin_audit ADD COLUMN IF NOT EXISTS target_type TEXT;
@@ -179,7 +182,7 @@ const requiredDbColumns = {
   manual_orders: ['public_id', 'access_secret_hash', 'product_id', 'product_name', 'player_id',
     'amount_rub', 'status', 'receipt_data', 'receipt_mime', 'receipt_uploaded_at', 'admin_note',
     'reviewed_at', 'reviewed_by', 'created_at'],
-  admin_audit: ['order_public_id', 'action', 'result', 'admin_identity', 'created_at',
+  admin_audit: ['order_public_id', 'action', 'operation_type', 'result', 'admin_identity', 'created_at',
     'request_id', 'reason_code', 'target_type', 'target_id', 'session_hash'],
   rate_limit_counters: ['limiter_name', 'key_hash', 'hits', 'reset_at']
 };
@@ -284,15 +287,15 @@ async function requireDb(req,res,next) {
     return deny('admin_credential_configuration_invalid','Администрирование отключено: задайте ADMIN_PASSWORD длиной не менее 20 символов.');
   next();
 }
-async function writeAudit(req, { action, result, reasonCode = null, targetType = null, targetId = null }) {
+async function writeAudit(req, { action, operationType = action, result, reasonCode = null, targetType = null, targetId = null }) {
   if (!pool) throw Object.assign(new Error('Audit storage unavailable'), { code: 'AUDIT_STORE_UNAVAILABLE' });
   const validTargetId = typeof targetId === 'string' && validId(targetId) ? targetId : null;
   const sessionHash = req.sessionID ? hash(req.sessionID) : null;
   await pool.query(`
     INSERT INTO admin_audit
-      (order_public_id, action, result, admin_identity, request_id, reason_code, target_type, target_id, session_hash)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-  `, [validTargetId, action, result, req.session?.isAdmin === true ? 'admin' : 'anonymous',
+      (order_public_id, action, operation_type, result, admin_identity, request_id, reason_code, target_type, target_id, session_hash)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+  `, [validTargetId, action, operationType, result, req.session?.isAdmin === true ? 'admin' : 'anonymous',
     req.requestId || crypto.randomUUID(), reasonCode, targetType, validTargetId, sessionHash]);
 }
 async function auditDenied(req, res, { action, reasonCode, status, error }) {
@@ -404,8 +407,9 @@ app.post('/api/admin/logout',requireDb,requireAdmin,requireCsrf,asyncHandler(asy
   return res.json({ok:true});
 }));
 app.post('/api/admin/orders/:publicId/:action',requireDb,requireAdmin,requireCsrf,asyncHandler(async(req,res)=>{
-  await writeAudit(req,{action:'admin_order_action',result:'denied',reasonCode:'safe_mode_disabled',
-    targetType:'order',targetId:validId(req.params.publicId)?req.params.publicId:null});
+  const knownAction = new Set(['fulfill','approve-payment','mark-paid','cancel','complete']);
+  await writeAudit(req,{action:'admin_order_action',operationType:knownAction.has(req.params.action)?req.params.action:'unknown_action',
+    result:'denied',reasonCode:'safe_mode_disabled',targetType:'order',targetId:validId(req.params.publicId)?req.params.publicId:null});
   return res.status(503).json({error:'Изменение заказов, подтверждение платежей и выдача UC отключены в безопасном режиме.'});
 }));
 app.use((req,res)=>req.path.startsWith('/api/')?res.status(404).json({error:'API endpoint не найден.'}):res.status(404).type('text').send('Not Found'));
