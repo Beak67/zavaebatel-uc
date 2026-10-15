@@ -22,7 +22,7 @@ npm test
 npm audit --omit=dev
 ```
 
-Workflow `.github/workflows/test.yml` запускает эти же проверки в Node.js 20 и PostgreSQL 16. Последний полностью успешный CI-run — #98 на commit `25ba68a8e301f152487504ef5b1870d7ca36cd16`: [просмотреть run](https://github.com/Beak67/zavaebatel-uc/actions/runs/38693525905). После него добавлена передача ошибок из async route handlers в Express error middleware и регрессионный тест; текущий branch head — `e640a8ef51ab994c460089c5a2ed8002637b9b45`. Для этого нового commit пока не удалось подтвердить отдельный CI-run. Не считайте run #98 проверкой последующих изменений.
+Workflow `.github/workflows/test.yml` запускает проверки в Node.js 20 и PostgreSQL 16. Run [#114](https://github.com/Beak67/zavaebatel-uc/actions/runs/38694541262) успешно завершился на PR merge ref, содержащем branch head `317011b111d8be11defc67fb9adebe0e1b5402dc`: `npm ci`, синтаксические проверки, `npm test` и `npm audit --omit=dev` — success. В логах run #114 контейнер PostgreSQL сначала ожидал health status `healthy`, затем job продолжился; ошибки и провала на `Initialize containers` нет. После этого обновлён регрессионный тест: теперь он вызывает реальный Express error middleware через HTTP и запускает тесты с `SBP_ENABLED=true`. Эти последние изменения требуют отдельного CI-run; run #114 не подтверждает их.
 
 ## Конфигурация
 
