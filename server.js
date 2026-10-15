@@ -118,7 +118,13 @@ export class PostgresRateLimitStore {
   }
 }
 const loginLimit = rateLimit({ windowMs: 15 * 60 * 1000, limit: 8, standardHeaders: true, legacyHeaders: false,
-  store: new PostgresRateLimitStore({ pool, limiterName: 'admin-login' }) });
+  store: new PostgresRateLimitStore({ pool, limiterName: 'admin-login' }),
+  handler: (req,res,_next,options) => {
+    writeAudit(req,{action:'admin_login',operationType:'login_rate_limit',result:'denied',reasonCode:'rate_limit_exceeded'})
+      .then(()=>res.status(options.statusCode).json({error:'Слишком много попыток входа. Попробуйте позже.'}),
+        ()=>res.status(503).json({error:'Журнал аудита недоступен; вход ограничен.'}));
+  }
+});
 const orderLimit = rateLimit({ windowMs: 60 * 60 * 1000, limit: 10, standardHeaders: true, legacyHeaders: false,
   store: new PostgresRateLimitStore({ pool, limiterName: 'order-create' }) });
 const receiptLimit = rateLimit({ windowMs: 60 * 60 * 1000, limit: 5, standardHeaders: true, legacyHeaders: false,
