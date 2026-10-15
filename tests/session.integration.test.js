@@ -54,9 +54,21 @@ test('PostgreSQL migration is executable and idempotent on the isolated test dat
              to_regclass('public.rate_limit_counters') AS rate_limit_counters,
              to_regclass('public.manual_orders_created_at_idx') AS orders_created_index,
              to_regclass('public.idx_user_sessions_expire') AS sessions_expiry_index,
-             to_regclass('public.rate_limit_counters_reset_at_idx') AS rate_limit_expiry_index
+             to_regclass('public.rate_limit_counters_reset_at_idx') AS rate_limit_expiry_index,
+             (SELECT EXISTS (
+               SELECT 1 FROM pg_constraint c
+               JOIN pg_class t ON t.oid = c.conrelid
+               WHERE c.conrelid = 'public.rate_limit_counters'::regclass AND c.contype IN ('p','u')
+                 AND (SELECT array_agg(a.attname::text ORDER BY k.ordinality)
+                      FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ordinality)
+                      JOIN pg_attribute a ON a.attrelid=t.oid AND a.attnum=k.attnum)
+                     = ARRAY['limiter_name','key_hash']::text[]
+             )) AS has_shared_rate_limit_key
     `);
-    for (const [name, value] of Object.entries(result.rows[0])) assert.ok(value, name + ' must exist after two migration runs');
+    for (const [name, value] of Object.entries(result.rows[0])) {
+      if (name === 'has_shared_rate_limit_key') assert.equal(value, true, 'ON CONFLICT key must have a real unique constraint');
+      else assert.ok(value, name + ' must exist after two migration runs');
+    }
     const auditColumns = await pool.query(`SELECT column_name, is_nullable FROM information_schema.columns
       WHERE table_schema='public' AND table_name='admin_audit'`);
     const auditSchema = new Map(auditColumns.rows.map(row => [row.column_name, row.is_nullable]));
