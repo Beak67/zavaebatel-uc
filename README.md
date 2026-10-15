@@ -27,7 +27,7 @@ npm audit --omit=dev
 
 **Не запускайте интеграционные тесты против production.** `TEST_DATABASE_URL` должен указывать только на loopback/localhost и имя БД, оканчивающееся на `_test`; тест откажется стартовать с другим адресом. Этот guard снижает риск ошибки конфигурации, но не защищает от вручную настроенного локального туннеля к production. CI использует локальный эфемерный PostgreSQL.
 
-[CI run #169](https://github.com/Beak67/zavaebatel-uc/actions/runs/38697515235) успешно проверил код/тесты revision `dcdec4de4959a2834a0aa7e1aa07aa64bb873371`: `npm ci` — PASS; syntax checks — PASS; `npm test` — 20 passed, 0 failed, 0 skipped; `npm audit --omit=dev` — 0 vulnerabilities в production dependencies. Тесты запускаются с `SBP_ENABLED=true`, проверяют блокировку заказов, чеков, платежей и административной выдачи, исполняют миграцию дважды на изолированной CI БД и проверяют отказ при несовместимой схеме. Это CI evidence, не production test. Последующие изменения только документации не меняют протестированный код/тесты.
+Последние изменения rate limiting и audit trail проходят отдельную проверку в GitHub Actions; результат следует сверять с актуальным head PR #1 и [последними CI runs](https://github.com/Beak67/zavaebatel-uc/actions). Не используйте результаты CI старой ревизии как доказательство проверки текущего кода. CI не является production test.
 
 ## Конфигурация
 
