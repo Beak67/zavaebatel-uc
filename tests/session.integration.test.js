@@ -261,6 +261,7 @@ test('PostgreSQL-backed admin sessions, login, CSRF, logout, and safe-mode admin
       assert.match(auditText, /invalid_credentials/);
       assert.ok(auditRows.rows.some(row => row.action === 'admin_login' && row.result === 'denied' && row.reason_code === 'invalid_credentials'));
       assert.ok(auditRows.rows.some(row => row.action === 'admin_login' && row.result === 'success'));
+      assert.ok(auditRows.rows.some(row => row.action === 'admin_login' && row.operation_type === 'login_rate_limit' && row.result === 'denied' && row.reason_code === 'rate_limit_exceeded'));
       assert.match(auditText, /admin_origin_check/);
       assert.match(auditText, /admin_csrf_check/);
       assert.match(auditText, /admin_order_action/);
