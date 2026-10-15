@@ -5,6 +5,7 @@ import { createServer } from 'node:net';
 import { createHmac } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import pg from 'pg';
+import { PostgresRateLimitStore } from '../server.js';
 
 const SECRET = 'ci-only-session-secret-not-production-0123456789';
 const ADMIN_PASSWORD = 'ci-only-admin-password-never-production';
@@ -41,20 +42,57 @@ test('PostgreSQL migration is executable and idempotent on the isolated test dat
   const { Pool } = pg;
   const pool = new Pool({ connectionString: TEST_DATABASE_URL, ssl: false, connectionTimeoutMillis: 3000 });
   try {
-    const sql = await readFile(new URL('../migrations/001_session_store_and_safe_admin.sql', import.meta.url), 'utf8');
-    await pool.query(sql);
-    await pool.query(sql);
+    for (const file of ['001_session_store_and_safe_admin.sql', '002_shared_rate_limits_and_audit.sql']) {
+      const sql = await readFile(new URL('../migrations/' + file, import.meta.url), 'utf8');
+      await pool.query(sql);
+      await pool.query(sql);
+    }
     const result = await pool.query(`
       SELECT to_regclass('public.user_sessions') AS user_sessions,
              to_regclass('public.manual_orders') AS manual_orders,
              to_regclass('public.admin_audit') AS admin_audit,
+             to_regclass('public.rate_limit_counters') AS rate_limit_counters,
              to_regclass('public.manual_orders_created_at_idx') AS orders_created_index,
-             to_regclass('public.idx_user_sessions_expire') AS sessions_expiry_index
+             to_regclass('public.idx_user_sessions_expire') AS sessions_expiry_index,
+             to_regclass('public.rate_limit_counters_reset_at_idx') AS rate_limit_expiry_index
     `);
     for (const [name, value] of Object.entries(result.rows[0])) assert.ok(value, name + ' must exist after two migration runs');
+    const auditColumns = await pool.query(`SELECT column_name, is_nullable FROM information_schema.columns
+      WHERE table_schema='public' AND table_name='admin_audit'`);
+    const auditSchema = new Map(auditColumns.rows.map(row => [row.column_name, row.is_nullable]));
+    for (const name of ['request_id','reason_code','target_type','target_id','session_hash']) assert.ok(auditSchema.has(name), name + ' audit field must exist');
+    assert.equal(auditSchema.get('order_public_id'), 'YES', 'audit rows must support non-order events such as login');
   } finally {
     await pool.end();
   }
+});
+
+test('independent PostgreSQL rate-limit stores share atomic counters, expire windows, and fail closed on storage errors', { skip: !TEST_DATABASE_URL ? 'TEST_DATABASE_URL is not configured; CI runs this test with a local PostgreSQL service.' : false }, async () => {
+  assertSafeTestDatabaseUrl(TEST_DATABASE_URL);
+  const { Pool } = pg;
+  const pool = new Pool({ connectionString: TEST_DATABASE_URL, ssl: false, connectionTimeoutMillis: 3000 });
+  const limiterName = 'integration-shared-counter-test';
+  try {
+    await pool.query('DELETE FROM rate_limit_counters WHERE limiter_name = $1', [limiterName]);
+    const firstInstance = new PostgresRateLimitStore({ pool, limiterName });
+    const secondInstance = new PostgresRateLimitStore({ pool, limiterName });
+    firstInstance.init({ windowMs: 500 });
+    secondInstance.init({ windowMs: 500 });
+    const simultaneous = await Promise.all([firstInstance.increment('synthetic-client'), secondInstance.increment('synthetic-client')]);
+    assert.deepEqual(simultaneous.map(item => item.totalHits).sort((a,b) => a-b), [1, 2]);
+    await new Promise(resolve => setTimeout(resolve, 600));
+    assert.equal((await secondInstance.increment('synthetic-client')).totalHits, 1, 'expired counter must reset');
+    await firstInstance.resetKey('synthetic-client');
+    assert.equal((await secondInstance.increment('synthetic-client')).totalHits, 1, 'resetKey must clear shared counter');
+  } finally {
+    await pool.query('DELETE FROM rate_limit_counters WHERE limiter_name = $1', [limiterName]).catch(()=>{});
+    await pool.end();
+  }
+  const noStore = new PostgresRateLimitStore({ pool: null, limiterName: 'missing-store-test' });
+  await assert.rejects(noStore.increment('client'), error => error.code === 'RATE_LIMIT_STORE_UNAVAILABLE');
+  const failingStore = new PostgresRateLimitStore({ pool: { query: async () => { throw new Error('sensitive database detail'); } }, limiterName: 'failure-test' });
+  await assert.rejects(failingStore.increment('client'), error =>
+    error.code === 'RATE_LIMIT_STORE_UNAVAILABLE' && !error.message.includes('sensitive database detail'));
 });
 
 async function freePort() {
@@ -183,6 +221,24 @@ test('PostgreSQL-backed admin sessions, login, CSRF, logout, and safe-mode admin
     assert.match(logout.headers.get('set-cookie') || '', /Expires=.*1970/i);
     const afterLogout = await fetch(app.base + '/api/admin/session', { headers: { cookie } });
     assert.equal(afterLogout.status, 401);
+
+    const auditPool = new pg.Pool({ connectionString: TEST_DATABASE_URL, ssl: false, connectionTimeoutMillis: 3000 });
+    try {
+      const auditRows = await auditPool.query(`SELECT action, result, reason_code, request_id, session_hash, order_public_id
+        FROM admin_audit WHERE request_id IS NOT NULL ORDER BY id`);
+      const auditText = JSON.stringify(auditRows.rows);
+      assert.match(auditText, /admin_login/);
+      assert.match(auditText, /invalid_credentials/);
+      assert.match(auditText, /admin_origin_check/);
+      assert.match(auditText, /admin_csrf_check/);
+      assert.match(auditText, /admin_order_action/);
+      assert.match(auditText, /safe_mode_disabled/);
+      assert.match(auditText, /admin_orders_view/);
+      assert.ok(auditRows.rows.every(row => typeof row.request_id === 'string'), 'every structured audit row has a request ID');
+      assert.ok(auditRows.rows.every(row => row.session_hash === null || /^[a-f0-9]{64}$/.test(row.session_hash)), 'session identifiers are stored only as hashes');
+      assert.doesNotMatch(auditText, new RegExp(ADMIN_PASSWORD));
+      assert.doesNotMatch(auditText, /ci-only-session-secret|zuc\.sid|csrfToken|test-token/i);
+    } finally { await auditPool.end(); }
 
     const health = await fetch(app.base + '/api/health');
     assert.equal(health.status, 200);
