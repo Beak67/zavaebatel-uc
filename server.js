@@ -48,8 +48,10 @@ app.use(helmet({ contentSecurityPolicy: { directives: {
 app.use(express.json({ limit: '32kb' }));
 app.use(express.urlencoded({ extended: false, limit: '8kb' }));
 
-if (pool && process.env.DB_AUTO_INIT === 'true' && process.env.SESSION_SECRET?.length >= 32) {
-  app.use(session({ name: 'zuc.sid', store: new PgStore({ pool, createTableIfMissing: true, tableName: 'user_sessions' }),
+const sessionConfigured = Boolean(pool && process.env.SESSION_SECRET && process.env.SESSION_SECRET.length >= 32);
+if (sessionConfigured) {
+  // Never fall back to express-session MemoryStore. The session table is provisioned by the explicit schema initializer/migration.
+  app.use(session({ name: 'zuc.sid', store: new PgStore({ pool, createTableIfMissing: false, tableName: 'user_sessions' }),
     secret: process.env.SESSION_SECRET, resave: false, saveUninitialized: false, rolling: true,
     cookie: { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'strict', maxAge: 4 * 60 * 60 * 1000, path: '/' } }));
 } else app.use((_req, _res, next) => { next(); });
@@ -68,6 +70,12 @@ async function initDb() {
   if (!pool) return;
   // Opt-in only. This initializer creates missing tables/additive columns; it never rewrites existing order statuses.
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS user_sessions (
+      sid VARCHAR NOT NULL PRIMARY KEY,
+      sess JSON NOT NULL,
+      expire TIMESTAMP(6) NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS IDX_user_sessions_expire ON user_sessions(expire);
     CREATE TABLE IF NOT EXISTS manual_orders (
       id BIGSERIAL PRIMARY KEY, public_id UUID NOT NULL UNIQUE, access_secret_hash TEXT NOT NULL,
       product_id TEXT NOT NULL, product_name TEXT NOT NULL, player_id TEXT NOT NULL,
@@ -85,11 +93,21 @@ async function initDb() {
     );
   `);
 }
+async function verifyDbSchema() {
+  const result = await pool.query(`
+    SELECT
+      to_regclass('public.user_sessions') AS user_sessions,
+      to_regclass('public.manual_orders') AS manual_orders,
+      to_regclass('public.admin_audit') AS admin_audit
+  `);
+  const row = result.rows[0] || {};
+  const missing = ['user_sessions', 'manual_orders', 'admin_audit'].filter(name => !row[name]);
+  if (missing.length) throw Object.assign(new Error('Required database schema is missing'), { code: 'DB_SCHEMA_MISSING' });
+}
 const dbReady = !pool
   ? Promise.resolve()
-  : process.env.DB_AUTO_INIT === 'true'
-    ? initDb().catch(e => { dbError = e; console.error('database_init_failed', { type: e.code || e.name || 'Error' }); })
-    : (dbError = Object.assign(new Error('Database initialization disabled'), { code: 'DB_INIT_DISABLED' }), Promise.resolve());
+  : (process.env.DB_AUTO_INIT === 'true' ? initDb() : verifyDbSchema())
+      .catch(e => { dbError = e; console.error('database_init_failed', { type: e.code || e.name || 'Error' }); });
 function safeEqual(a,b) { const x=Buffer.from(String(a)); const y=Buffer.from(String(b)); return x.length===y.length && crypto.timingSafeEqual(x,y); }
 function hash(s) { return crypto.createHash('sha256').update(s).digest('hex'); }
 function validId(s) { return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(s)); }
@@ -153,12 +171,23 @@ export async function getCatalog() {
 async function requireDb(_req,res,next) {
   await dbReady;
   if (!pool) return res.status(503).json({ error:'PostgreSQL не настроен: задайте DATABASE_URL.' });
+  if (!sessionConfigured) return res.status(503).json({ error:'Администрирование отключено: задайте DATABASE_URL и SESSION_SECRET длиной не менее 32 символов.' });
   if (dbError) return res.status(503).json({ error:'PostgreSQL недоступен или схема не инициализирована.' });
-  if (!process.env.ADMIN_PASSWORD || !process.env.SESSION_SECRET || process.env.SESSION_SECRET.length<32)
-    return res.status(503).json({ error:'Администрирование отключено: задайте ADMIN_PASSWORD и SESSION_SECRET длиной не менее 32 символов.' });
+  if (!process.env.ADMIN_PASSWORD || process.env.ADMIN_PASSWORD.length < 20)
+    return res.status(503).json({ error:'Администрирование отключено: задайте ADMIN_PASSWORD длиной не менее 20 символов.' });
   next();
 }
 function requireAdmin(req,res,next) { if (req.session?.isAdmin===true) return next(); return res.status(401).json({error:'Требуется вход администратора.'}); }
+function requireSameOrigin(req,res,next) {
+  const origin = req.get('origin');
+  if (origin) {
+    let parsed;
+    try { parsed = new URL(origin); } catch { return res.status(403).json({ error:'Origin не разрешён.' }); }
+    if (parsed.host !== req.get('host') || !['http:', 'https:'].includes(parsed.protocol))
+      return res.status(403).json({ error:'Origin не разрешён.' });
+  }
+  next();
+}
 function requireCsrf(req,res,next) {
   if (!req.session?.csrfToken || !safeEqual(req.get('x-csrf-token')||'',req.session.csrfToken)) return res.status(403).json({error:'CSRF-проверка не пройдена.'});
   next();
@@ -176,7 +205,8 @@ app.get('/admin', (_req,res,next)=> {
 });
 // Only the dedicated public directory is exposed; project files and secrets remain outside the static root.
 app.use(express.static(publicDir, { index:false, dotfiles:'deny', fallthrough:true, maxAge:0 }));
-app.get('/api/health', (_req,res)=>{
+app.get('/api/health', async (_req,res)=> {
+  await dbReady;
   const database = !pool ? 'not_configured' : dbError ? 'error' : 'configured';
   const ok = Boolean(pool) && !dbError;
   res.status(ok ? 200 : 503).json({ ok, shop:'ZAVAEBATEL UC', database, ordersEnabled:false });
@@ -195,7 +225,7 @@ app.get('/api/orders/:publicId', requireDb, async (req,res)=>{
   res.set('Cache-Control','no-store').json(r.rows[0]);
 });
 app.post('/api/orders/:publicId/receipt', receiptLimit, (_req,res)=>res.status(503).json({error:'Загрузка чеков отключена вместе с оформлением заказов.'}));
-app.post('/api/admin/login', loginLimit, requireDb, (req,res)=>{
+app.post('/api/admin/login', loginLimit, requireSameOrigin, requireDb, (req,res)=>{
   if (!safeEqual(req.body?.password||'',process.env.ADMIN_PASSWORD||'')) return res.status(401).json({error:'Неверный пароль.'});
   req.session.regenerate(err=>{
     if(err||!req.session) return res.status(500).json({error:'Не удалось создать защищённую сессию.'});
@@ -214,26 +244,22 @@ app.get('/api/admin/orders/:publicId/receipt',requireDb,requireAdmin,async(req,r
   if(!r.rowCount) return res.sendStatus(404);
   res.set({'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Content-Disposition':'attachment; filename="receipt"'}).type(r.rows[0].receipt_mime).send(r.rows[0].receipt_data);
 });
-app.post('/api/admin/logout',requireDb,requireAdmin,requireCsrf,(req,res)=>req.session.destroy(e=>e?res.status(500).json({error:'Не удалось завершить сессию.'}):res.json({ok:true})));
-app.post('/api/admin/orders/:publicId/:action',requireDb,requireAdmin,requireCsrf,async(req,res)=>{
-  const transitions={confirm:['receipt_submitted','paid'],reject:['receipt_submitted','rejected'],fulfill:['paid','fulfilled']};
-  const t=transitions[req.params.action], id=req.params.publicId;
-  if(!validId(id)||!t) return res.status(400).json({error:'Некорректное действие.'});
-  const client=await pool.connect();
-  try {
-    await client.query('BEGIN');
-    const r=await client.query('UPDATE manual_orders SET status=$1,admin_note=$2,reviewed_at=NOW(),reviewed_by=$3 WHERE public_id=$4 AND status=$5 RETURNING public_id,status',[t[1],typeof req.body?.note==='string'?req.body.note.slice(0,500):null,'admin',id,t[0]]);
-    await client.query('INSERT INTO admin_audit(order_public_id,action,result) VALUES($1,$2,$3)',[id,req.params.action,r.rowCount?'success':'rejected_invalid_transition']);
-    await client.query('COMMIT');
-    if(!r.rowCount) return res.status(409).json({error:'Недопустимый переход статуса. Оплату подтверждайте только по поступлению в банковском приложении.'});
-    res.json({ok:true,order:r.rows[0]});
-  } catch(e) { await client.query('ROLLBACK').catch(()=>{}); console.error('admin_action_failed',{type:e.code||e.name||'Error'}); res.status(500).json({error:'Не удалось выполнить действие.'}); }
-  finally { client.release(); }
-});
+app.post('/api/admin/logout',requireDb,requireAdmin,requireCsrf,(req,res)=>req.session.destroy(e=> {
+  if (e) return res.status(500).json({error:'Не удалось завершить сессию.'});
+  res.clearCookie('zuc.sid',{httpOnly:true,secure:process.env.NODE_ENV==='production',sameSite:'strict',path:'/'});
+  return res.json({ok:true});
+}));
+app.post('/api/admin/orders/:publicId/:action',requireDb,requireAdmin,requireCsrf,(_req,res)=>
+  res.status(503).json({error:'Изменение заказов, подтверждение платежей и выдача UC отключены в безопасном режиме.'})
+);
 app.use((req,res)=>req.path.startsWith('/api/')?res.status(404).json({error:'API endpoint не найден.'}):res.status(404).type('text').send('Not Found'));
 app.use((err,_req,res,_next)=>{
-  console.error('request_failed',{type:err.type==='entity.too.large'?'body_too_large':err.code||err.name||'Error'});
-  if(!res.headersSent) res.status(err.type==='entity.too.large'?413:400).json({error:err.type==='entity.too.large'?'Тело запроса слишком большое.':'Некорректный запрос.'});
+  const type = err.type==='entity.too.large' ? 'body_too_large' : err.code || err.name || 'Error';
+  console.error('request_failed',{type});
+  const storageUnavailable = typeof err.code === 'string' && (/^(08|53|57P01|3D000|42P01|ECONN|ETIMEDOUT|EHOSTUNREACH|ENOTFOUND)/.test(err.code));
+  const status = err.type==='entity.too.large' ? 413 : storageUnavailable ? 503 : 400;
+  const message = status===413 ? 'Тело запроса слишком большое.' : status===503 ? 'Хранилище сессий или база данных временно недоступны.' : 'Некорректный запрос.';
+  if(!res.headersSent) res.status(status).json({error:message});
 });
 if (process.env.NODE_ENV !== 'test') app.listen(Number(process.env.PORT||3000),'0.0.0.0',()=>console.log('ZAVAEBATEL UC listening',{port:Number(process.env.PORT||3000)}));
 export default app;
