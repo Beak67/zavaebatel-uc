@@ -31,9 +31,9 @@
 
 ## Проверки CI
 
-Текущие изменения rate limiting и audit trail должны проверяться на актуальном head PR #1 в [GitHub Actions](https://github.com/Beak67/zavaebatel-uc/actions). Ранее успешный run относится к старой ревизии и не доказывает корректность нового кода. Не объявляйте `npm ci`, syntax checks, `npm test` или `npm audit --omit=dev` успешными до завершения актуального CI.
+[Run #236](https://github.com/Beak67/zavaebatel-uc/actions/runs/38699952627) успешно выполнил `npm ci`, `node --check server.js && node --check public/admin.js && node --check public/storefront.js`, `npm test` и `npm audit --omit=dev` для application/test revision `003522133b0f8b8b23411e626f1cb10e0992275f`. CI использовал эфемерную PostgreSQL 16; команды выполнялись в GitHub Actions, не локально. Последующие изменения документации не меняют протестированный код/тесты. Это не production test.
 
-Интеграционные тесты отказываются запускаться, если `TEST_DATABASE_URL` не указывает на loopback/localhost и имя базы с суффиксом `_test`. CI использует эфемерную PostgreSQL 16. Guard защищает от случайной ошибки конфигурации, но не от вручную настроенного локального туннеля к production. Тесты проверяют несколько независимых rate-limit store экземпляров на одной тестовой БД, истечение/reset счётчика, ошибки хранилища, структуру audit rows, идемпотентность миграций и блокировки safe mode при `SBP_ENABLED=true`. Это не production test и не подтверждение Render topology или DB grants.
+Интеграционные тесты допускают только loopback/localhost и имя БД с суффиксом `_test`; guard защищает от случайной ошибки, но не от вручную настроенного локального туннеля к production. Тесты проверяют два независимых PostgreSQL-backed store, превышение login-лимита, истечение/reset счётчика, ошибки store, audit rows и секретные поля, идемпотентность миграций и safe mode при `SBP_ENABLED=true`.
 
 Подробности и актуальные статусы PASS / FAIL / NOT VERIFIED описаны в [SECURITY_AUDIT.md](SECURITY_AUDIT.md).
 
