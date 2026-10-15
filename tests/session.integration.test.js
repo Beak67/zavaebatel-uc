@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:net';
 import { createHmac } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
+import pg from 'pg';
 
 const SECRET = 'ci-only-session-secret-not-production-0123456789';
 const ADMIN_PASSWORD = 'ci-only-admin-password-never-production';
@@ -32,6 +34,27 @@ test('test database guard rejects non-local and non-test targets without connect
     'https://127.0.0.1/zavaebatel_test'
   ]) assert.throws(() => assertSafeTestDatabaseUrl(value), /Refusing integration test/);
   assert.equal(assertSafeTestDatabaseUrl('postgresql://postgres:postgres@127.0.0.1:5432/zavaebatel_test'), true);
+});
+
+test('PostgreSQL migration is executable and idempotent on the isolated test database', { skip: !TEST_DATABASE_URL ? 'TEST_DATABASE_URL is not configured; CI runs this test with a local PostgreSQL service.' : false }, async () => {
+  assertSafeTestDatabaseUrl(TEST_DATABASE_URL);
+  const { Pool } = pg;
+  const pool = new Pool({ connectionString: TEST_DATABASE_URL, ssl: false, connectionTimeoutMillis: 3000 });
+  try {
+    const sql = await readFile(new URL('../migrations/001_session_store_and_safe_admin.sql', import.meta.url), 'utf8');
+    await pool.query(sql);
+    await pool.query(sql);
+    const result = await pool.query(`
+      SELECT to_regclass('public.user_sessions') AS user_sessions,
+             to_regclass('public.manual_orders') AS manual_orders,
+             to_regclass('public.admin_audit') AS admin_audit,
+             to_regclass('public.manual_orders_created_at_idx') AS orders_created_index,
+             to_regclass('public."IDX_user_sessions_expire"') AS sessions_expiry_index
+    `);
+    for (const [name, value] of Object.entries(result.rows[0])) assert.ok(value, name + ' must exist after two migration runs');
+  } finally {
+    await pool.end();
+  }
 });
 
 async function freePort() {
