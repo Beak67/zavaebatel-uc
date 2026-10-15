@@ -103,16 +103,16 @@ No changes to `main`, no merge, no deployment, no production environment changes
 
 ## 7. Tests and actual results
 
-The earlier [CI run #236](https://github.com/Beak67/zavaebatel-uc/actions/runs/38699952627) is historical and does **not** prove the new timeout/concurrency tests pass. Current-head status must be read from the workflow run associated with the latest PR head.
+The earlier [CI run #236](https://github.com/Beak67/zavaebatel-uc/actions/runs/38699952627) is historical. **CI run #266** ([workflow](https://github.com/Beak67/zavaebatel-uc/actions/runs/38703617985)) completed successfully on PR head `d7e9b8c7e9e2a1e631508e14820c0b94df3da9b6`; it ran the code/test changes plus the README updates in that revision. The subsequent edit to this audit document is documentation-only and will trigger another workflow run.
 
-| Command / test | Current result |
+| Command / test | Actual result on run #266 |
 |---|---|
-| npm ci | PENDING until the latest-head workflow result is confirmed |
-| JavaScript syntax checks | PENDING until the latest-head workflow result is confirmed |
-| npm test including isolated PostgreSQL 16 migration, concurrency, cleanup-failure, UPSERT-failure and lock-timeout tests | PENDING until the latest-head workflow result is confirmed |
-| npm audit --omit=dev | PENDING until the latest-head workflow result is confirmed |
+| npm ci | PASS — step succeeded |
+| JavaScript syntax checks | PASS — step succeeded |
+| npm test | PASS — 24 passed, 0 failed, 0 skipped; isolated PostgreSQL 16 migration, 100-way concurrency, cleanup-failure, UPSERT-failure, and lock-timeout tests included |
+| npm audit --omit=dev | PASS — step succeeded |
 
-Tests use only TEST_DATABASE_URL, which is rejected before connection unless it uses a loopback host and database name ending in _test. The timeout test uses the isolated test database and holds a row lock to force a bounded failure; no production URL is used. These results must not be described as PASS unless the latest workflow actually reports success.
+Tests use only TEST_DATABASE_URL, which is rejected before connection unless it uses a loopback host and database name ending in _test. The timeout test uses the isolated test database and holds a row lock to force a bounded failure; no production URL is used. These are CI results, not local or production tests.
 
 ### Cloudflare Workers Build — NOT VERIFIED
 
