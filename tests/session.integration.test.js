@@ -60,7 +60,7 @@ test('PostgreSQL migration is executable and idempotent on the isolated test dat
     const auditColumns = await pool.query(`SELECT column_name, is_nullable FROM information_schema.columns
       WHERE table_schema='public' AND table_name='admin_audit'`);
     const auditSchema = new Map(auditColumns.rows.map(row => [row.column_name, row.is_nullable]));
-    for (const name of ['request_id','reason_code','target_type','target_id','session_hash']) assert.ok(auditSchema.has(name), name + ' audit field must exist');
+    for (const name of ['operation_type','request_id','reason_code','target_type','target_id','session_hash']) assert.ok(auditSchema.has(name), name + ' audit field must exist');
     assert.equal(auditSchema.get('order_public_id'), 'YES', 'audit rows must support non-order events such as login');
   } finally {
     await pool.end();
@@ -224,7 +224,7 @@ test('PostgreSQL-backed admin sessions, login, CSRF, logout, and safe-mode admin
 
     const auditPool = new pg.Pool({ connectionString: TEST_DATABASE_URL, ssl: false, connectionTimeoutMillis: 3000 });
     try {
-      const auditRows = await auditPool.query(`SELECT action, result, reason_code, request_id, session_hash, order_public_id
+      const auditRows = await auditPool.query(`SELECT action, operation_type, result, reason_code, request_id, session_hash, order_public_id
         FROM admin_audit WHERE request_id IS NOT NULL ORDER BY id`);
       const auditText = JSON.stringify(auditRows.rows);
       assert.match(auditText, /admin_login/);
@@ -233,6 +233,7 @@ test('PostgreSQL-backed admin sessions, login, CSRF, logout, and safe-mode admin
       assert.match(auditText, /admin_csrf_check/);
       assert.match(auditText, /admin_order_action/);
       assert.match(auditText, /safe_mode_disabled/);
+      assert.match(auditText, /approve-payment|fulfill|mark-paid|cancel|complete/);
       assert.match(auditText, /admin_orders_view/);
       assert.ok(auditRows.rows.every(row => typeof row.request_id === 'string'), 'every structured audit row has a request ID');
       assert.ok(auditRows.rows.every(row => row.session_hash === null || /^[a-f0-9]{64}$/.test(row.session_hash)), 'session identifiers are stored only as hashes');
