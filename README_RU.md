@@ -72,12 +72,14 @@
 
 Workflow `.github/workflows/test.yml` запускает `npm ci`, `npm test` и `npm audit --omit=dev` в Node.js 20. Интеграционные тесты сессий используют только эфемерный PostgreSQL с тестовыми credentials в CI; они не обращаются к Render, Nexus или реальным платежам.
 
-Фактический успешный run для commit `7c6960773b8687b10d6c5c0fdd2f42b2280eff9f`: [GitHub Actions run #90](https://github.com/Beak67/zavaebatel-uc/actions/runs/38692361446).
-- `npm ci`: успешно; 99 packages added, 100 audited.
-- `npm test`: **16 passed, 0 failed, 0 skipped**. Включены реальные HTTP-тесты login/session/CSRF/logout на эфемерной PostgreSQL и fail-closed тест при недоступном хранилище.
-- `npm audit --omit=dev`: успешно; **0 vulnerabilities**.
+`package-lock.json` включён в репозиторий: `lockfileVersion: 3`, совместим с npm 9/10 и Node.js 20. Его пригодность для clean install подтверждена успешным `npm ci` в GitHub Actions, а не только статической проверкой файла.
 
-Эти результаты относятся к проверенному коду и тестам; последний последующий commit, меняющий только этот README, также проходит стандартный CI отдельно. Не запускайте тесты против production DATABASE_URL.
+Последний подтверждённый успешный run для актуального на момент проверки commit `92ba235d78133969887533a6c345fd3fc52f8f4a`: [GitHub Actions run #92](https://github.com/Beak67/zavaebatel-uc/actions/runs/38692461525).
+- `npm ci`: **success**.
+- `npm test`: **success**; workflow завершил шаг тестов без ошибок.
+- `npm audit --omit=dev`: **success**, 0 vulnerabilities согласно выводу run.
+
+Workflow запускает эти три шага последовательно в Node.js 20 с эфемерной PostgreSQL для интеграционных тестов. Не запускайте тесты против production `DATABASE_URL`. Изменения после этого commit потребуют нового CI-run; результаты выше не следует автоматически переносить на будущие коммиты.
 
 ## Что осталось непроверенным
 
