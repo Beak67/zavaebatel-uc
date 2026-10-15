@@ -80,6 +80,10 @@ test('independent PostgreSQL rate-limit stores share atomic counters, expire win
     secondInstance.init({ windowMs: 500 });
     const simultaneous = await Promise.all([firstInstance.increment('synthetic-client'), secondInstance.increment('synthetic-client')]);
     assert.deepEqual(simultaneous.map(item => item.totalHits).sort((a,b) => a-b), [1, 2]);
+    const storedKey = await pool.query('SELECT key_hash FROM rate_limit_counters WHERE limiter_name = $1', [limiterName]);
+    assert.equal(storedKey.rows.length, 1);
+    assert.match(storedKey.rows[0].key_hash, /^[a-f0-9]{64}$/);
+    assert.notEqual(storedKey.rows[0].key_hash, 'synthetic-client', 'raw client keys must not be stored');
     await new Promise(resolve => setTimeout(resolve, 600));
     assert.equal((await secondInstance.increment('synthetic-client')).totalHits, 1, 'expired counter must reset');
     await firstInstance.resetKey('synthetic-client');
@@ -243,11 +247,15 @@ test('PostgreSQL-backed admin sessions, login, CSRF, logout, and safe-mode admin
       const auditText = JSON.stringify(auditRows.rows);
       assert.match(auditText, /admin_login/);
       assert.match(auditText, /invalid_credentials/);
+      assert.ok(auditRows.rows.some(row => row.action === 'admin_login' && row.result === 'denied' && row.reason_code === 'invalid_credentials'));
+      assert.ok(auditRows.rows.some(row => row.action === 'admin_login' && row.result === 'success'));
       assert.match(auditText, /admin_origin_check/);
       assert.match(auditText, /admin_csrf_check/);
       assert.match(auditText, /admin_order_action/);
       assert.match(auditText, /safe_mode_disabled/);
       assert.match(auditText, /approve-payment|fulfill|mark-paid|cancel|complete/);
+      assert.ok(auditRows.rows.some(row => row.action === 'admin_order_action' && row.result === 'denied' && row.reason_code === 'safe_mode_disabled' && row.operation_type === 'fulfill'));
+      assert.ok(auditRows.rows.some(row => row.action === 'admin_orders_view' && row.result === 'success'));
       assert.match(auditText, /admin_orders_view/);
       assert.ok(auditRows.rows.every(row => typeof row.request_id === 'string'), 'every structured audit row has a request ID');
       assert.ok(auditRows.rows.every(row => row.session_hash === null || /^[a-f0-9]{64}$/.test(row.session_hash)), 'session identifiers are stored only as hashes');
