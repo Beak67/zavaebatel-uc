@@ -37,7 +37,7 @@ app.use(helmet({ contentSecurityPolicy: { directives: {
 app.use(express.json({ limit: '32kb' }));
 app.use(express.urlencoded({ extended: false, limit: '8kb' }));
 
-if (pool && process.env.SESSION_SECRET?.length >= 32) {
+if (pool && process.env.DB_AUTO_INIT === 'true' && process.env.SESSION_SECRET?.length >= 32) {
   app.use(session({ name: 'zuc.sid', store: new PgStore({ pool, createTableIfMissing: true, tableName: 'user_sessions' }),
     secret: process.env.SESSION_SECRET, resave: false, saveUninitialized: false, rolling: true,
     cookie: { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'strict', maxAge: 4 * 60 * 60 * 1000, path: '/' } }));
@@ -139,7 +139,8 @@ export async function getCatalog() {
   if (last?.kind) throw last;
   throw Object.assign(new Error('Nexus временно недоступен. Попробуйте позже.'), { kind: 'upstream_unavailable' });
 }
-function requireDb(_req,res,next) {
+async function requireDb(_req,res,next) {
+  await dbReady;
   if (!pool) return res.status(503).json({ error:'PostgreSQL не настроен: задайте DATABASE_URL.' });
   if (dbError) return res.status(503).json({ error:'PostgreSQL недоступен или схема не инициализирована.' });
   if (!process.env.ADMIN_PASSWORD || !process.env.SESSION_SECRET || process.env.SESSION_SECRET.length<32)
