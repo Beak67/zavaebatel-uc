@@ -10,7 +10,7 @@ process.env.SBP_ENABLED = 'true';
 process.env.NEXUS_PRICE_CURRENCY = 'USD';
 process.env.NEXUS_USD_RUB = '85';
 process.env.SALE_MARKUP = '0.20';
-const { default: app, normalizeProducts, retailPrice, getCatalog, asyncHandler } = await import('../server.js');
+const { default: app, normalizeProducts, retailPrice, getCatalog, asyncHandler, missingRequiredSchemaColumns } = await import('../server.js');
 process.env.NEXUS_SHOP_ID = 'test-shop';
 process.env.NEXUS_SHOP_TOKEN = 'test-token';
 
@@ -104,6 +104,20 @@ test('production session configuration has no MemoryStore fallback and fails clo
   assert.match(source, /function requireSameOrigin/);
   assert.match(source, /SESSION_SECRET\.length\s*>=\s*32/);
   assert.match(source, /ADMIN_PASSWORD\.length\s*<\s*20/);
+});
+
+test('schema readiness rejects missing required PostgreSQL columns', () => {
+  const columns = {
+    user_sessions: ['sid', 'sess', 'expire'],
+    manual_orders: ['public_id', 'access_secret_hash', 'product_id', 'product_name', 'player_id',
+      'amount_rub', 'status', 'receipt_data', 'receipt_mime', 'receipt_uploaded_at', 'admin_note',
+      'reviewed_at', 'reviewed_by', 'created_at'],
+    admin_audit: ['order_public_id', 'action', 'result', 'admin_identity', 'created_at']
+  };
+  const rows = Object.entries(columns).flatMap(([table_name, names]) => names.map(column_name => ({ table_name, column_name })));
+  assert.deepEqual(missingRequiredSchemaColumns(rows), []);
+  assert.deepEqual(missingRequiredSchemaColumns(rows.filter(row => !(row.table_name === 'manual_orders' && row.column_name === 'status'))), ['manual_orders.status']);
+  assert.ok(missingRequiredSchemaColumns([]).includes('user_sessions.sid'));
 });
 
 test('database migration is additive and never rewrites order statuses', async () => {
