@@ -195,6 +195,9 @@ export function missingRequiredSchemaColumns(rows) {
   return Object.entries(requiredDbColumns).flatMap(([table, columns]) =>
     columns.filter(column => !present.get(table)?.has(column)).map(column => table + '.' + column));
 }
+export function hasSharedRateLimitUniqueKey(row) {
+  return row?.has_shared_rate_limit_key === true;
+}
 async function verifyDbSchema() {
   // A table-only check can report ready for a stale schema and defer failure to a live request.
   const result = await pool.query(
@@ -203,6 +206,24 @@ async function verifyDbSchema() {
   );
   if (missingRequiredSchemaColumns(result.rows).length) {
     throw Object.assign(new Error('Required database schema is missing or incompatible'), { code: 'DB_SCHEMA_MISSING' });
+  }
+  // ON CONFLICT requires a real unique/primary key on the exact pair; columns alone are insufficient.
+  const constraint = await pool.query(`
+    SELECT EXISTS (
+      SELECT 1
+      FROM pg_constraint c
+      JOIN pg_class t ON t.oid = c.conrelid
+      WHERE c.conrelid = 'public.rate_limit_counters'::regclass
+        AND c.contype IN ('p','u')
+        AND (
+          SELECT array_agg(a.attname::text ORDER BY k.ordinality)
+          FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ordinality)
+          JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum
+        ) = ARRAY['limiter_name','key_hash']::text[]
+    ) AS has_shared_rate_limit_key
+  `);
+  if (!hasSharedRateLimitUniqueKey(constraint.rows[0])) {
+    throw Object.assign(new Error('Shared rate-limit counter key is missing a compatible unique constraint'), { code: 'DB_SCHEMA_MISSING' });
   }
 }
 const dbReady = !pool
