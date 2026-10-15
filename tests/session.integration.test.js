@@ -182,6 +182,20 @@ test('PostgreSQL-backed admin sessions, login, CSRF, logout, and safe-mode admin
     const orders = await fetch(app.base + '/api/admin/orders', { headers: { cookie } });
     assert.equal(orders.status, 200);
 
+    // The configured threshold remains 8 requests per 15 minutes; Origin denials and bad credentials count too.
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const denied = await fetch(app.base + '/api/admin/login', {
+        method: 'POST', headers: { 'content-type': 'application/json', origin: app.base, 'x-forwarded-proto': 'https' },
+        body: JSON.stringify({ password: 'wrong-password-for-rate-limit-test' })
+      });
+      assert.equal(denied.status, 401, 'attempts up to the configured threshold remain ordinary authentication failures');
+    }
+    const limitedLogin = await fetch(app.base + '/api/admin/login', {
+      method: 'POST', headers: { 'content-type': 'application/json', origin: app.base, 'x-forwarded-proto': 'https' },
+      body: JSON.stringify({ password: 'wrong-password-for-rate-limit-test' })
+    });
+    assert.equal(limitedLogin.status, 429, 'the ninth request within the window exceeds the existing limit of eight');
+
     const noCsrfLogout = await fetch(app.base + '/api/admin/logout', {
       method: 'POST', headers: { cookie, 'content-type': 'application/json' }, body: '{}'
     });
