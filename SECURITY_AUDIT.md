@@ -1,9 +1,9 @@
 # Production-readiness / security audit — ZAVAEBATEL UC
 
-**Scope:** repository review and safe CI tests on \`security/audit-safe-storefront\`. No production deployment, production configuration change, production database connection, real order/payment/receipt upload, or UC fulfillment was performed.
+**Scope:** repository review and safe CI tests on `security/audit-safe-storefront`. No production deployment, production configuration change, production database connection, real order/payment/receipt upload, or UC fulfillment was performed.
 
-**Tested application/test revision:** \`dcdec4de4959a2834a0aa7e1aa07aa64bb873371\`  
-**CI evidence:** [Run #169](https://github.com/Beak67/zavaebatel-uc/actions/runs/38697515235) — successful. It ran \`npm ci\`, syntax checks, \`npm test\` (20 passed, 0 failed, 0 skipped), and \`npm audit --omit=dev\` (0 production dependency vulnerabilities reported). Later commits, if any, that only update this report/README do not change the tested application or test code.
+**Tested application/test revision:** `dcdec4de4959a2834a0aa7e1aa07aa64bb873371`  
+**CI evidence:** [Run #169](https://github.com/Beak67/zavaebatel-uc/actions/runs/38697515235) — successful. It ran `npm ci`, syntax checks, `npm test` (20 passed, 0 failed, 0 skipped), and `npm audit --omit=dev` (0 production dependency vulnerabilities reported). Later commits, if any, that only update this report/README do not change the tested application or test code.
 
 ## Decision
 
@@ -15,12 +15,12 @@ Status definitions: **PASS** means supported by the named code review/test/evide
 
 | Status | Check and evidence |
 |---|---|
-| PASS | \`server.js\`: Express trusts forwarded headers only when \`TRUST_PROXY_HOPS\` parses as an integer from 1 through 5; production admin routes fail closed if it is absent/invalid. This is a guard, not proof that the configured hop count is correct. |
-| PASS | \`server.js\`: session cookie uses \`HttpOnly\`, \`SameSite=Strict\`, \`Secure\` when \`NODE_ENV=production\`, path \`/\`, four-hour \`maxAge\`, and no rolling refresh. Login regenerates the session ID and saves the new session. \`tests/session.integration.test.js\` checks cookie attributes, login and logout against the test PostgreSQL service. |
-| PASS | Login is rate-limited (8 attempts per 15 minutes by the configured rate limiter); order and receipt endpoints also have limits. Login requires an Origin matching the request Host; admin mutation routes require a session CSRF token. Evidence: \`server.js\`, authenticated integration test. |
-| PASS | Security headers/CSP are configured with Helmet in \`server.js\`; \`tests/smoke.test.js\` checks CSP script restrictions and that project files outside \`public/\` are not served as static assets. |
-| NOT VERIFIED | Render's actual proxy chain, TLS termination, domain/custom-domain settings, runtime Node version, build/start commands, environment-variable presence and whether the live service runs this branch. Verify in Render Dashboard before any deployment. Do not infer these values from \`.env.example\`. |
-| NOT VERIFIED | Real-browser cookie behavior and rate-limit client-IP attribution through the actual Render proxy chain. \`express-rate-limit\` uses its default per-process store here; if multiple instances are used, limits are not a shared global counter. Confirm instance topology or adopt a shared store before relying on a global attempt limit. |
+| PASS | `server.js`: Express trusts forwarded headers only when `TRUST_PROXY_HOPS` parses as an integer from 1 through 5; production admin routes fail closed if it is absent/invalid. This is a guard, not proof that the configured hop count is correct. |
+| PASS | `server.js`: session cookie uses `HttpOnly`, `SameSite=Strict`, `Secure` when `NODE_ENV=production`, path `/`, four-hour `maxAge`, and no rolling refresh. Login regenerates the session ID and saves the new session. `tests/session.integration.test.js` checks cookie attributes, login and logout against the test PostgreSQL service. |
+| PASS | Login is rate-limited (8 attempts per 15 minutes by the configured rate limiter); order and receipt endpoints also have limits. Login requires an Origin matching the request Host; admin mutation routes require a session CSRF token. Evidence: `server.js`, authenticated integration test. |
+| PASS | Security headers/CSP are configured with Helmet in `server.js`; `tests/smoke.test.js` checks CSP script restrictions and that project files outside `public/` are not served as static assets. |
+| NOT VERIFIED | Render's actual proxy chain, TLS termination, domain/custom-domain settings, runtime Node version, build/start commands, environment-variable presence and whether the live service runs this branch. Verify in Render Dashboard before any deployment. Do not infer these values from `.env.example`. |
+| NOT VERIFIED | Real-browser cookie behavior and rate-limit client-IP attribution through the actual Render proxy chain. `express-rate-limit` uses its default per-process store here; if multiple instances are used, limits are not a shared global counter. Confirm instance topology or adopt a shared store before relying on a global attempt limit. |
 | NOT VERIFIED | Canonical production-origin policy. Code compares Origin's host to the incoming Host; it does not pin a separately configured canonical origin. Confirm the deployed host/proxy behavior and consider an explicit canonical-origin allowlist if the topology warrants it. |
 | NOT VERIFIED | Admin credential lifecycle, recovery, rotation procedure and MFA. Current code uses a single configured admin password; CI does not verify production account operations or MFA. |
 
@@ -28,11 +28,11 @@ Status definitions: **PASS** means supported by the named code review/test/evide
 
 | Status | Check and evidence |
 |---|---|
-| PASS | Request-controlled identifiers in reviewed queries use PostgreSQL parameters (\`$1\`, \`$2\`) and order UUIDs are validated before lookup. Evidence: \`server.js\`. |
-| PASS | Remote PostgreSQL connections enable certificate verification (\`rejectUnauthorized: true\`); connection query parameters that could override SSL settings are stripped before constructing the pool. Evidence: \`server.js\`. This does not verify the real production connection configuration or CA chain. |
-| PASS | \`migrations/001_session_store_and_safe_admin.sql\` uses a transaction, \`IF NOT EXISTS\` table/index creation and additive \`ADD COLUMN IF NOT EXISTS\`; it does not drop/truncate tables or rewrite order statuses. The test \`PostgreSQL migration is executable and idempotent on the isolated test database\` runs it twice against CI PostgreSQL 16 and checks the expected tables/indexes. |
-| PASS | Schema readiness now checks required columns via \`information_schema.columns\`, not only table names. \`tests/smoke.test.js\` tests complete, missing-column and missing-schema cases using the extracted validator; the PostgreSQL integration test also provisions and exercises the expected schema. |
-| PASS | \`DB_AUTO_INIT\` defaults to the verification path; initialization is opt-in. Session store table auto-creation by \`connect-pg-simple\` is disabled. Evidence: \`server.js\`, \`.env.example\`. |
+| PASS | Request-controlled identifiers in reviewed queries use PostgreSQL parameters (`$1`, `$2`) and order UUIDs are validated before lookup. Evidence: `server.js`. |
+| PASS | Remote PostgreSQL connections enable certificate verification (`rejectUnauthorized: true`); connection query parameters that could override SSL settings are stripped before constructing the pool. Evidence: `server.js`. This does not verify the real production connection configuration or CA chain. |
+| PASS | `migrations/001_session_store_and_safe_admin.sql` uses a transaction, `IF NOT EXISTS` table/index creation and additive `ADD COLUMN IF NOT EXISTS`; it does not drop/truncate tables or rewrite order statuses. The test `PostgreSQL migration is executable and idempotent on the isolated test database` runs it twice against CI PostgreSQL 16 and checks the expected tables/indexes. |
+| PASS | Schema readiness now checks required columns via `information_schema.columns`, not only table names. `tests/smoke.test.js` tests complete, missing-column and missing-schema cases using the extracted validator; the PostgreSQL integration test also provisions and exercises the expected schema. |
+| PASS | `DB_AUTO_INIT` defaults to the verification path; initialization is opt-in. Session store table auto-creation by `connect-pg-simple` is disabled. Evidence: `server.js`, `.env.example`. |
 | NOT VERIFIED | Production schema, existing data compatibility, constraints/indexes on the real database, migration scheduling/ownership, connection pool sizing and the privileges actually granted to the production database role. No production DB connection or migration was attempted. |
 | NOT VERIFIED | Least-privilege grants. The repository does not establish what privileges the configured Render database role has; confirm using an approved read-only privilege review or a cloned environment. |
 | NOT VERIFIED | Backup and restore. No accessible backup, restore target or restore evidence was provided; no restore is claimed. |
@@ -53,9 +53,9 @@ Status definitions: **PASS** means supported by the named code review/test/evide
 
 | Status | Check and evidence |
 |---|---|
-| PASS | The server obtains catalog data server-side; client-supplied prices are not used to create an order because order creation is disabled. Product IDs are restricted to the \`pubg-mobile:uc:<digits>\` shape, and supplier prices must be finite and positive before server-side retail calculation. Evidence: \`normalizeProducts\`, \`retailPrice\` in \`server.js\`, mock-based tests in \`tests/smoke.test.js\`. |
-| PASS | Nexus requests have an eight-second timeout, bounded retry behavior and generic handling of network/upstream failures. Logs record timing/status/error type/count, not the Authorization header. Tests stub \`fetch\` and check malformed responses, HTTP errors and retry bounds. |
-| PASS | Current fulfillment endpoint is a server-side HTTP 503 guard for every administrative action, including an authenticated admin with \`SBP_ENABLED=true\`. No fulfillment request was sent to Nexus. |
+| PASS | The server obtains catalog data server-side; client-supplied prices are not used to create an order because order creation is disabled. Product IDs are restricted to the `pubg-mobile:uc:<digits>` shape, and supplier prices must be finite and positive before server-side retail calculation. Evidence: `normalizeProducts`, `retailPrice` in `server.js`, mock-based tests in `tests/smoke.test.js`. |
+| PASS | Nexus requests have an eight-second timeout, bounded retry behavior and generic handling of network/upstream failures. Logs record timing/status/error type/count, not the Authorization header. Tests stub `fetch` and check malformed responses, HTTP errors and retry bounds. |
+| PASS | Current fulfillment endpoint is a server-side HTTP 503 guard for every administrative action, including an authenticated admin with `SBP_ENABLED=true`. No fulfillment request was sent to Nexus. |
 | NOT VERIFIED | Actual Nexus API contract, authentication scheme, token scope/permissions, sandbox availability, upstream idempotency semantics, price currency, live price accuracy, supplier SKU mapping and operational rate limits. No real Nexus credentials were used. |
 | NOT VERIFIED | Protection against duplicate fulfillment for a future enabled implementation. It is not exercised because fulfillment is deliberately disabled; before any enablement, require server-side idempotency keys/order state transitions, retry/reconciliation semantics and tests against a confirmed sandbox. |
 | NOT VERIFIED | Commercial price correctness. Formula and input validation are unit-tested, but FX value, markup, supplier currency and product mapping require owner-approved business rules and independent price reconciliation. |
@@ -64,14 +64,14 @@ Secrets are not intentionally returned by catalog/API handlers or embedded in cl
 
 ## 4. Safe-mode enforcement
 
-**PASS — current routes remain disabled server-side even with \`SBP_ENABLED=true\`.**
+**PASS — current routes remain disabled server-side even with `SBP_ENABLED=true`.**
 
 Evidence:
-- \`tests/smoke.test.js\`: sets \`SBP_ENABLED=true\`; checks order creation and receipt upload return HTTP 503, payment info remains disabled, the health route does not report an unconfigured database as healthy, and API responses do not expose known test credentials.
-- \`tests/session.integration.test.js\`: runs with \`SBP_ENABLED=true\`; checks authenticated admin actions (\`fulfill\`, payment/status-like actions) return HTTP 503, payment instructions remain disabled, order creation/receipt upload remain blocked, CSRF checks work and logout invalidates the session.
-- \`server.js\`: routes return 503 before any order/payment/receipt/fulfillment side effect; there is no live fulfillment implementation in these paths.
+- `tests/smoke.test.js`: sets `SBP_ENABLED=true`; checks order creation and receipt upload return HTTP 503, payment info remains disabled, the health route does not report an unconfigured database as healthy, and API responses do not expose known test credentials.
+- `tests/session.integration.test.js`: runs with `SBP_ENABLED=true`; checks authenticated admin actions (`fulfill`, payment/status-like actions) return HTTP 503, payment instructions remain disabled, order creation/receipt upload remain blocked, CSRF checks work and logout invalidates the session.
+- `server.js`: routes return 503 before any order/payment/receipt/fulfillment side effect; there is no live fulfillment implementation in these paths.
 
-The test DB guard in \`tests/session.integration.test.js\` rejects non-loopback hosts and database names not ending in \`_test\` **before spawning the integration server**. CI uses a local ephemeral PostgreSQL 16 service. This is an accidental-misconfiguration guard, not a defense against a deliberately configured local tunnel to production; do not use tunnels or production connection strings for tests.
+The test DB guard in `tests/session.integration.test.js` rejects non-loopback hosts and database names not ending in `_test` **before spawning the integration server**. CI uses a local ephemeral PostgreSQL 16 service. This is an accidental-misconfiguration guard, not a defense against a deliberately configured local tunnel to production; do not use tunnels or production connection strings for tests.
 
 ## 5. Findings by priority
 
@@ -86,31 +86,31 @@ The test DB guard in \`tests/session.integration.test.js\` rejects non-loopback 
 
 1. **Shared admin credential / no demonstrated MFA.** Validate credential rotation, recovery and access policy; add individual admin identities/MFA if required by the threat model.
 2. **Rate limits are per process with the default store.** Confirm the deployment has a single instance or use a shared store if cross-instance enforcement is required.
-3. **Admin audit trail is incomplete.** The \`admin_audit\` table is provisioned, but rejected safe-mode operations are not written to an append-only audit trail. Do not treat this table as an operational audit system.
+3. **Admin audit trail is incomplete.** The `admin_audit` table is provisioned, but rejected safe-mode operations are not written to an append-only audit trail. Do not treat this table as an operational audit system.
 4. **Origin policy depends on incoming Host.** Validate against the actual public hostname and proxy behavior; consider an explicit canonical-origin allowlist.
 
 No critical defect was found that enables real transactions in the current code paths; that is not equivalent to a clean bill of health for production.
 
 ## 6. Changed files in this audit
 
-- \`server.js\` — schema readiness validates required columns and fails closed for incompatible schemas.
-- \`tests/smoke.test.js\` — tests complete/missing-column schema validation.
-- \`tests/session.integration.test.js\` — refuses non-loopback/non-\`_test\` DB targets; tests safe-mode admin actions with \`SBP_ENABLED=true\`; executes the SQL migration twice on isolated CI PostgreSQL.
-- \`SECURITY_AUDIT.md\` — this evidence-based status report.
-- \`README.md\`, \`README_RU.md\` — current test evidence and external blockers.
+- `server.js` — schema readiness validates required columns and fails closed for incompatible schemas.
+- `tests/smoke.test.js` — tests complete/missing-column schema validation.
+- `tests/session.integration.test.js` — refuses non-loopback/non-`_test` DB targets; tests safe-mode admin actions with `SBP_ENABLED=true`; executes the SQL migration twice on isolated CI PostgreSQL.
+- `SECURITY_AUDIT.md` — this evidence-based status report.
+- `README.md`, `README_RU.md` — current test evidence and external blockers.
 
-No changes to \`main\`, no merge, no deployment, no production environment changes, no production DB access/mutation and no real business operations were performed.
+No changes to `main`, no merge, no deployment, no production environment changes, no production DB access/mutation and no real business operations were performed.
 
 ## 7. Tests and actual results
 
-**CI run #169:** [https://github.com/Beak67/zavaebatel-uc/actions/runs/38697515235](https://github.com/Beak67/zavaebatel-uc/actions/runs/38697515235) — completed successfully on tested code/test revision \`dcdec4de4959a2834a0aa7e1aa07aa64bb873371\`.
+**CI run #169:** [https://github.com/Beak67/zavaebatel-uc/actions/runs/38697515235](https://github.com/Beak67/zavaebatel-uc/actions/runs/38697515235) — completed successfully on tested code/test revision `dcdec4de4959a2834a0aa7e1aa07aa64bb873371`.
 
 | Command | Actual result |
 |---|---|
-| \`npm ci\` | PASS |
-| \`node --check server.js && node --check public/admin.js && node --check public/storefront.js\` | PASS |
-| \`npm test\` | PASS — 20 tests, 20 passed, 0 failed, 0 skipped |
-| \`npm audit --omit=dev\` | PASS — 0 vulnerabilities reported in production dependencies |
+| `npm ci` | PASS |
+| `node --check server.js && node --check public/admin.js && node --check public/storefront.js` | PASS |
+| `npm test` | PASS — 20 tests, 20 passed, 0 failed, 0 skipped |
+| `npm audit --omit=dev` | PASS — 0 vulnerabilities reported in production dependencies |
 
 These commands ran in GitHub Actions, not in a local environment. The dependency audit covers production dependencies known to npm at that run; it does not prove the application is vulnerability-free or audit all development dependencies.
 
