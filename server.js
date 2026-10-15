@@ -19,12 +19,16 @@ const base = (process.env.NEXUS_API_BASE || 'https://nexus.amadeustech.dev').tri
 const currency = process.env.NEXUS_PRICE_CURRENCY;
 const fx = Number(process.env.NEXUS_USD_RUB ?? 85);
 const markup = Number(process.env.SALE_MARKUP ?? 0.20);
-const pool = process.env.DATABASE_URL ? new Pool({ connectionString: process.env.DATABASE_URL, ssl: /localhost|127\.0\.0\.1/.test(process.env.DATABASE_URL) ? false : { rejectUnauthorized: false }, connectionTimeoutMillis: 5000 }) : null;
+const dbHost = (() => { try { return new URL(process.env.DATABASE_URL || '').hostname.toLowerCase(); } catch { return ''; } })();
+const localDb = ['localhost', '127.0.0.1', '::1'].includes(dbHost);
+const pool = process.env.DATABASE_URL ? new Pool({ connectionString: process.env.DATABASE_URL, ssl: localDb ? false : { rejectUnauthorized: true }, connectionTimeoutMillis: 5000 }) : null;
 const PgStore = connectPgSimple(session);
 let dbError = null;
 
 app.disable('x-powered-by');
-app.set('trust proxy', 1);
+// Trust forwarded client IPs only when the deployment explicitly declares its trusted proxy hop count.
+const trustProxyHops = Number(process.env.TRUST_PROXY_HOPS || 0);
+if (Number.isInteger(trustProxyHops) && trustProxyHops >= 1 && trustProxyHops <= 5) app.set('trust proxy', trustProxyHops);
 app.use(helmet({ contentSecurityPolicy: { directives: {
   defaultSrc: ["'self'"], scriptSrc: ["'self'"], styleSrc: ["'self'", "'unsafe-inline'"],
   imgSrc: ["'self'", 'data:', 'https:'], connectSrc: ["'self'"], objectSrc: ["'none'"],
@@ -51,6 +55,7 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 *
 
 async function initDb() {
   if (!pool) return;
+  // Opt-in only. This initializer creates missing tables/additive columns; it never rewrites existing order statuses.
   await pool.query(`
     CREATE TABLE IF NOT EXISTS manual_orders (
       id BIGSERIAL PRIMARY KEY, public_id UUID NOT NULL UNIQUE, access_secret_hash TEXT NOT NULL,
@@ -62,13 +67,6 @@ async function initDb() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
     ALTER TABLE manual_orders ADD COLUMN IF NOT EXISTS reviewed_by TEXT;
-    ALTER TABLE manual_orders DROP CONSTRAINT IF EXISTS manual_orders_status_check;
-    UPDATE manual_orders SET status=CASE status
-      WHEN 'awaiting_payment' THEN 'pending_payment' WHEN 'proof_submitted' THEN 'receipt_submitted'
-      WHEN 'payment_confirmed' THEN 'paid' WHEN 'payment_rejected' THEN 'rejected'
-      WHEN 'ready_for_fulfillment' THEN 'paid' ELSE status END;
-    ALTER TABLE manual_orders ADD CONSTRAINT manual_orders_status_check
-      CHECK (status IN ('pending_payment','receipt_submitted','paid','rejected','fulfilled'));
     CREATE INDEX IF NOT EXISTS manual_orders_created_at_idx ON manual_orders(created_at DESC);
     CREATE TABLE IF NOT EXISTS admin_audit (
       id BIGSERIAL PRIMARY KEY, order_public_id UUID NOT NULL, action TEXT NOT NULL, result TEXT NOT NULL,
@@ -76,7 +74,11 @@ async function initDb() {
     );
   `);
 }
-const dbReady = initDb().catch(e => { dbError = e; console.error('database_init_failed', { type: e.code || e.name || 'Error' }); });
+const dbReady = !pool
+  ? Promise.resolve()
+  : process.env.DB_AUTO_INIT === 'true'
+    ? initDb().catch(e => { dbError = e; console.error('database_init_failed', { type: e.code || e.name || 'Error' }); })
+    : (dbError = Object.assign(new Error('Database initialization disabled'), { code: 'DB_INIT_DISABLED' }), Promise.resolve());
 function safeEqual(a,b) { const x=Buffer.from(String(a)); const y=Buffer.from(String(b)); return x.length===y.length && crypto.timingSafeEqual(x,y); }
 function hash(s) { return crypto.createHash('sha256').update(s).digest('hex'); }
 function validId(s) { return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(s)); }
