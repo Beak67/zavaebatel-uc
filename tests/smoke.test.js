@@ -139,9 +139,10 @@ test('database migrations are additive and never rewrite order statuses', async 
 
 test('rate limiting requires the shared PostgreSQL store and fails closed without leaking storage errors', async () => {
   const source = await readFile(new URL('../server.js', import.meta.url), 'utf8');
-  assert.match(source, /store:\s*new PostgresRateLimitStore\(\{ pool, limiterName: 'admin-login' \}\)/);
-  assert.match(source, /store:\s*new PostgresRateLimitStore\(\{ pool, limiterName: 'order-create' \}\)/);
-  assert.match(source, /store:\s*new PostgresRateLimitStore\(\{ pool, limiterName: 'receipt-upload' \}\)/);
+  assert.match(source, /store:\s*new PostgresRateLimitStore\(\{ pool: rateLimitPool, limiterName: 'admin-login' \}\)/);
+  assert.match(source, /store:\s*new PostgresRateLimitStore\(\{ pool: rateLimitPool, limiterName: 'order-create' \}\)/);
+  assert.match(source, /store:\s*new PostgresRateLimitStore\(\{ pool: rateLimitPool, limiterName: 'receipt-upload' \}\)/);
+  assert.match(source, /connectionTimeoutMillis: 1000,\s*query_timeout: 2500,\s*statement_timeout: 2000,\s*lock_timeout: 500/);
   const absent = new PostgresRateLimitStore({ pool: null, limiterName: 'unit-test' });
   await assert.rejects(absent.increment('synthetic-client'), error => error.code === 'RATE_LIMIT_STORE_UNAVAILABLE');
   const broken = new PostgresRateLimitStore({ pool: { query: async () => { throw new Error('do-not-expose-this'); } }, limiterName: 'unit-test' });
