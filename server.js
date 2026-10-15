@@ -394,6 +394,7 @@ app.post('/api/admin/login', loginLimit, requireSameOrigin, requireDb, asyncHand
     await writeAudit(req, { action:'admin_login', result:'success' });
   } catch {
     await new Promise(resolve => req.session.destroy(() => resolve())).catch(()=>{});
+    await writeAudit(req,{action:'admin_login',result:'error',reasonCode:'session_or_audit_write_failed'}).catch(()=>{});
     return res.status(503).json({error:'Не удалось сохранить сессию или запись аудита.'});
   }
   return res.json({ok:true,csrfToken:req.session.csrfToken});
