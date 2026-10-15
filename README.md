@@ -27,7 +27,7 @@ npm audit --omit=dev
 
 **Не запускайте интеграционные тесты против production.** `TEST_DATABASE_URL` должен указывать только на loopback/localhost и имя БД, оканчивающееся на `_test`; тест откажется стартовать с другим адресом. Этот guard снижает риск ошибки конфигурации, но не защищает от вручную настроенного локального туннеля к production. CI использует локальный эфемерный PostgreSQL.
 
-CI run [#236](https://github.com/Beak67/zavaebatel-uc/actions/runs/38699952627) успешно выполнил `npm ci`, syntax checks, `npm test` (включая изолированную PostgreSQL 16) и `npm audit --omit=dev` для application/test revision `003522133b0f8b8b23411e626f1cb10e0992275f`. Последующие изменения только документации не меняют протестированный код/тесты. Это CI evidence, не production test; актуальные статусы см. в [последних CI runs](https://github.com/Beak67/zavaebatel-uc/actions).
+CI run [#236](https://github.com/Beak67/zavaebatel-uc/actions/runs/38699952627) успешно проверил более раннюю ревизию `003522133b0f8b8b23411e626f1cb10e0992275f`; это историческое свидетельство, не проверка последних изменений rate limiter. Проверка актуального HEAD включает тесты конкурентности, отказа очистки и SQL lock timeout; её результат следует смотреть в [последних CI runs](https://github.com/Beak67/zavaebatel-uc/actions). CI использует изолированную PostgreSQL 16 и не является production test.
 
 ## Конфигурация
 
