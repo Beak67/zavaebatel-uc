@@ -52,7 +52,7 @@ const sessionConfigured = Boolean(pool && process.env.SESSION_SECRET && process.
 if (sessionConfigured) {
   // Never fall back to express-session MemoryStore. The session table is provisioned by the explicit schema initializer/migration.
   app.use(session({ name: 'zuc.sid', store: new PgStore({ pool, createTableIfMissing: false, tableName: 'user_sessions' }),
-    secret: process.env.SESSION_SECRET, resave: false, saveUninitialized: false, rolling: true,
+    secret: process.env.SESSION_SECRET, resave: false, saveUninitialized: false, rolling: false,
     cookie: { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'strict', maxAge: 4 * 60 * 60 * 1000, path: '/' } }));
 } else app.use((_req, _res, next) => { next(); });
 
@@ -180,12 +180,11 @@ async function requireDb(_req,res,next) {
 function requireAdmin(req,res,next) { if (req.session?.isAdmin===true) return next(); return res.status(401).json({error:'Требуется вход администратора.'}); }
 function requireSameOrigin(req,res,next) {
   const origin = req.get('origin');
-  if (origin) {
-    let parsed;
-    try { parsed = new URL(origin); } catch { return res.status(403).json({ error:'Origin не разрешён.' }); }
-    if (parsed.host !== req.get('host') || !['http:', 'https:'].includes(parsed.protocol))
-      return res.status(403).json({ error:'Origin не разрешён.' });
-  }
+  if (!origin) return res.status(403).json({ error:'Origin обязателен для входа администратора.' });
+  let parsed;
+  try { parsed = new URL(origin); } catch { return res.status(403).json({ error:'Origin не разрешён.' }); }
+  if (parsed.host !== req.get('host') || !['http:', 'https:'].includes(parsed.protocol))
+    return res.status(403).json({ error:'Origin не разрешён.' });
   next();
 }
 function requireCsrf(req,res,next) {
