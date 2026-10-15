@@ -5,6 +5,8 @@ import http from 'node:http';
 import { spawnSync } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 
+// Exercise safe-mode guards with the opt-in flag set; business operations must remain disabled.
+process.env.SBP_ENABLED = 'true';
 process.env.NEXUS_PRICE_CURRENCY = 'USD';
 process.env.NEXUS_USD_RUB = '85';
 process.env.SALE_MARKUP = '0.20';
